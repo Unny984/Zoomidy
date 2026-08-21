@@ -37,6 +37,10 @@ lip install github.com/unnyminer2/zoomidy
 
 Hold `F`. That is the whole thing.
 
+Zoomidy watches the key rather than taking it over, so pick one Minecraft does not already use.
+If you bind it to a key that already does something, both will happen — but nothing gets locked
+away, and you can always rebind from the config file.
+
 ### Settings screen
 
 ```

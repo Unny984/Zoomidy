@@ -16,6 +16,10 @@ public:
 
     [[nodiscard]] ll::mod::NativeMod& getSelf() const { return mSelf; }
 
+    /// Read from the render thread on every frame, and written from the server thread when the
+    /// settings form is applied. The config holds nothing but naturally aligned scalars, so the
+    /// worst a race can produce is one frame built from a mix of old and new settings — never a
+    /// torn value. That is not worth a lock on the FOV hot path.
     [[nodiscard]] Config const& getConfig() const { return mConfig; }
 
     /// Replaces the whole config and writes it back to disk.

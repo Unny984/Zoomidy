@@ -6,6 +6,7 @@
 
 #include "ll/api/event/EventBus.h"
 #include "ll/api/event/Listener.h"
+#include "ll/api/event/client/ClientExitLevelEvent.h"
 #include "ll/api/event/input/KeyInputEvent.h"
 #include "ll/api/event/input/MouseInputEvent.h"
 #include "ll/api/event/world/ClientLevelTickEvent.h"
@@ -24,6 +25,7 @@ namespace {
 ll::event::ListenerPtr gKeyListener;
 ll::event::ListenerPtr gMouseListener;
 ll::event::ListenerPtr gTickListener;
+ll::event::ListenerPtr gExitListener;
 
 /// The zoom key is currently physically down. Guards against key auto-repeat flipping a toggle
 /// binding on and off many times a second.
@@ -99,6 +101,10 @@ short filterAxis(short raw, double factor, bool cinematic, double strength, doub
     );
 }
 
+/// Note that the event is never cancelled. Suppressing the key would mean that binding the zoom
+/// to a key Minecraft already uses — chat, escape, a movement key — would take that function away
+/// with no way to get it back from inside the game. Letting the key through costs nothing when it
+/// is bound to something vanilla does not use, which is the normal case.
 void onKeyInput(ll::event::KeyInputEvent& ev) {
     auto const& config = Zoomidy::getInstance().getConfig();
     if (ev.keyCode() != config.zoom.keyCode) {
@@ -117,10 +123,11 @@ void onKeyInput(ll::event::KeyInputEvent& ev) {
         if (config.zoom.activation == ActivationMode::Hold) {
             zoom.setActive(false);
         }
-        ev.cancel();
         return;
     }
 
+    // Auto-repeat sends a stream of key-downs while the key is held; only the first one counts,
+    // otherwise a toggle binding would flicker on and off many times a second.
     if (!isInGameplay() || gKeyHeld) {
         return;
     }
@@ -131,7 +138,6 @@ void onKeyInput(ll::event::KeyInputEvent& ev) {
     } else {
         zoom.setActive(true);
     }
-    ev.cancel();
 }
 
 void onMouseInput(ll::event::MouseInputEvent& ev) {
@@ -182,6 +188,14 @@ void onClientTick(ll::event::ClientLevelTickEvent&) {
     }
 }
 
+/// Leaving the world while zoomed would otherwise carry the zoom into the next one, because
+/// nothing else clears the state between sessions.
+void onExitLevel(ll::event::ClientExitLevelEvent&) {
+    gKeyHeld = false;
+    resetFilters();
+    ZoomState::getInstance().reset();
+}
+
 } // namespace
 
 void registerInputListeners() {
@@ -190,12 +204,13 @@ void registerInputListeners() {
     gKeyListener   = bus.emplaceListener<ll::event::KeyInputEvent>(onKeyInput);
     gMouseListener = bus.emplaceListener<ll::event::MouseInputEvent>(onMouseInput);
     gTickListener  = bus.emplaceListener<ll::event::ClientLevelTickEvent>(onClientTick);
+    gExitListener  = bus.emplaceListener<ll::event::ClientExitLevelEvent>(onExitLevel);
 }
 
 void unregisterInputListeners() {
     auto& bus = ll::event::EventBus::getInstance();
 
-    for (auto* listener : {&gKeyListener, &gMouseListener, &gTickListener}) {
+    for (auto* listener : {&gKeyListener, &gMouseListener, &gTickListener, &gExitListener}) {
         if (*listener) {
             bus.removeListener(*listener);
             listener->reset();

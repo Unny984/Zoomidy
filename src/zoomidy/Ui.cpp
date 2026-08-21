@@ -220,12 +220,12 @@ void buildAndShow(Player& player) {
 } // namespace
 
 std::string describeUnavailability() {
-    if (!ll::service::getServerInstance()) {
+    // Deliberately shallow: this runs on the client thread, so it only checks for things that
+    // are safe to read from here. Walking the server's player list is left to the server thread
+    // in `openSettingsForm`.
+    if (!ll::service::getServerInstance() || !ll::service::getLevel()) {
         return "The settings form needs a world this client is hosting. Join a single-player or "
-               "LAN-hosted world, or edit config/config.json and run /zoomidy reload.";
-    }
-    if (findHostedServerPlayer() == nullptr) {
-        return "No player found in the hosted world yet. Try again once you are in the world.";
+               "LAN-hosted world, or use the /zoomidy sub-commands, which work anywhere.";
     }
     return {};
 }
@@ -234,7 +234,11 @@ void openSettingsForm() {
     ll::thread::ServerThreadExecutor::getDefault().execute([] {
         if (auto* player = findHostedServerPlayer()) {
             buildAndShow(*player);
+            return;
         }
+        Zoomidy::getInstance().getSelf().getLogger().warn(
+            "Could not open the settings form: no player in the hosted world."
+        );
     });
 }
 

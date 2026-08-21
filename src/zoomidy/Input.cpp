@@ -46,6 +46,10 @@ double gResidualY = 0.0;
 double gCinematicX = 0.0;
 double gCinematicY = 0.0;
 
+/// Remaining mouse events to dump to the log for `/zoomidy debug`. Counts down to zero so the
+/// diagnostic cannot be left on by accident.
+int gDebugEventsLeft = 0;
+
 void resetFilters() {
     gResidualX  = 0.0;
     gResidualY  = 0.0;
@@ -153,7 +157,7 @@ void onMouseInput(ll::event::MouseInputEvent& ev) {
         return;
     }
 
-    char const action = ev.actionButtonId();
+    int const action = ev.actionButtonId();
 
     if (action == ::MouseAction::ActionWheel) {
         if (config.zoom.scrollToAdjust && zoom.isActive()) {
@@ -168,15 +172,37 @@ void onMouseInput(ll::event::MouseInputEvent& ev) {
         return;
     }
 
-    if (action != ::MouseAction::ActionMoveRelative) {
-        return;
-    }
-
     double const factor    = sensitivityFactor();
     bool const   cinematic = config.cinematic.enabled;
     double const strength  = std::clamp(config.cinematic.strength, 0.0, 0.95);
 
+    if (gDebugEventsLeft > 0) {
+        --gDebugEventsLeft;
+        Zoomidy::getInstance().getSelf().getLogger().info(
+            "mouse action={} data={} x={} y={} dx={} dy={} factor={:.3f} divisor={:.3f}",
+            action,
+            static_cast<int>(ev.buttonData()),
+            ev.x(),
+            ev.y(),
+            ev.dx(),
+            ev.dy(),
+            factor,
+            zoom.currentDivisor()
+        );
+        if (gDebugEventsLeft == 0) {
+            Zoomidy::getInstance().getSelf().getLogger().info("mouse debug capture finished.");
+        }
+    }
+
     if (factor == 1.0 && !cinematic) {
+        return;
+    }
+
+    // Any event that carries movement is filtered, not just ActionMoveRelative. Which action id
+    // the client uses for a pointer-locked camera is not something the headers pin down, and a
+    // motionless event is a no-op through the filter anyway, so matching on the delta rather than
+    // on the action is both safer and cheaper than guessing.
+    if (ev.dx() == 0 && ev.dy() == 0) {
         return;
     }
 
@@ -232,6 +258,12 @@ void unregisterInputListeners() {
     }
     gHeldKeyCode = 0;
     resetFilters();
+}
+
+int enableInputDebug(bool enabled) {
+    constexpr int kDebugEventBudget = 60;
+    gDebugEventsLeft                = enabled ? kDebugEventBudget : 0;
+    return gDebugEventsLeft;
 }
 
 } // namespace zoomidy

@@ -17,6 +17,7 @@
 #include "mc/server/commands/CommandPermissionLevel.h"
 
 #include "zoomidy/Config.h"
+#include "zoomidy/Input.h"
 #include "zoomidy/KeyNames.h"
 #include "zoomidy/Ui.h"
 #include "zoomidy/ZoomState.h"
@@ -47,6 +48,10 @@ struct ActivationParam {
 
 struct HandParam {
     bool hide;
+};
+
+struct DebugParam {
+    bool enabled;
 };
 
 struct SensitivityParam {
@@ -170,6 +175,21 @@ void buildCommand() {
                 config.animation.durationSeconds * 1000.0,
                 magic_enum::enum_name(config.animation.curve)
             );
+        }
+    );
+
+    cmd.overload<DebugParam>().text("debug").required("enabled").execute(
+        [](CommandOrigin const&, CommandOutput& output, DebugParam const& param) {
+            int const budget = enableInputDebug(param.enabled);
+            if (budget > 0) {
+                output.success(
+                    "Logging the next {} mouse events while zoomed. Hold the zoom key, move the "
+                    "mouse, then read logs/latest.log.",
+                    budget
+                );
+            } else {
+                output.success("Mouse event logging off.");
+            }
         }
     );
 

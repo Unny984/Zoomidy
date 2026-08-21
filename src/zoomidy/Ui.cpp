@@ -31,14 +31,27 @@ constexpr ll::ui::ObservableOptions kWritable{.clientWritable = true};
 // range, and that clamped value is what gets read back on close -- so anything the form shows
 // has to be seeded already clamped, or opening the form would quietly rewrite a config.json the
 // user edited by hand.
-constexpr double kDurationMinMs      = 0.0;
-constexpr double kDurationMaxMs      = 2000.0;
-constexpr double kScrollStepMin      = 1.05;
-constexpr double kScrollStepMax      = 2.0;
-constexpr double kMultiplierMin      = 0.05;
-constexpr double kMultiplierMax      = 3.0;
-constexpr double kCinematicMin       = 0.0;
-constexpr double kCinematicMax       = 0.95;
+//
+// Fractional settings are carried as whole percents rather than as the fraction itself. Bedrock
+// prints a slider's raw value, and a 0.05 step walks 0.05, 0.1, ... 1.5000000000000002 because
+// neither the step nor the accumulated total is representable in binary floating point. Stepping
+// over integers and dividing at the edge keeps the label readable and the value exact.
+constexpr double kDurationMinMs   = 0.0;
+constexpr double kDurationMaxMs   = 2000.0;
+constexpr double kDurationStepMs  = 10.0;
+constexpr double kScrollStepMinPc = 105.0;
+constexpr double kScrollStepMaxPc = 200.0;
+constexpr double kMultiplierMinPc = 5.0;
+constexpr double kMultiplierMaxPc = 300.0;
+constexpr double kCinematicMinPc  = 0.0;
+constexpr double kCinematicMaxPc  = 95.0;
+constexpr double kPercentStep     = 5.0;
+
+/// Rounds to the nearest whole percent so the value that lands in the slider is one the slider's
+/// own step can actually reach.
+double toPercent(double fraction) { return std::round(fraction * 100.0); }
+
+double fromPercent(double percent) { return percent / 100.0; }
 
 /// The magnification slider's range, sanitised so a hand-edited config can never hand `slider()`
 /// a minimum above its maximum.
@@ -54,15 +67,15 @@ struct FormState {
     ll::ui::ObservableNumber  activation{0.0, kWritable};
     ll::ui::ObservableNumber  factor{1.0, kWritable};
     ll::ui::ObservableBoolean scrollToAdjust{false, kWritable};
-    ll::ui::ObservableNumber  scrollStep{kScrollStepMin, kWritable};
+    ll::ui::ObservableNumber  scrollStepPercent{kScrollStepMinPc, kWritable};
     ll::ui::ObservableBoolean rememberScrolledFactor{false, kWritable};
     ll::ui::ObservableNumber  durationMillis{0.0, kWritable};
     ll::ui::ObservableNumber  curve{0.0, kWritable};
     ll::ui::ObservableBoolean hideHand{false, kWritable};
     ll::ui::ObservableNumber  sensitivityMode{0.0, kWritable};
-    ll::ui::ObservableNumber  sensitivityMultiplier{1.0, kWritable};
+    ll::ui::ObservableNumber  sensitivityMultiplierPercent{100.0, kWritable};
     ll::ui::ObservableBoolean cinematicEnabled{false, kWritable};
-    ll::ui::ObservableNumber  cinematicStrength{0.0, kWritable};
+    ll::ui::ObservableNumber  cinematicStrengthPercent{0.0, kWritable};
     ll::ui::ObservableString  keyStatus{std::string{}};
 };
 
@@ -76,15 +89,19 @@ void seed(FormState& state, Config const& config) {
     state.activation.setData(static_cast<double>(config.zoom.activation));
     state.factor.setData(std::clamp(config.zoom.factor, factorMin, factorMax));
     state.scrollToAdjust.setData(config.zoom.scrollToAdjust);
-    state.scrollStep.setData(std::clamp(config.zoom.scrollStep, kScrollStepMin, kScrollStepMax));
+    state.scrollStepPercent.setData(std::clamp(toPercent(config.zoom.scrollStep), kScrollStepMinPc, kScrollStepMaxPc));
     state.rememberScrolledFactor.setData(config.zoom.rememberScrolledFactor);
     state.durationMillis.setData(std::clamp(config.animation.durationSeconds * 1000.0, kDurationMinMs, kDurationMaxMs));
     state.curve.setData(static_cast<double>(config.animation.curve));
     state.hideHand.setData(config.view.hideHand);
     state.sensitivityMode.setData(static_cast<double>(config.sensitivity.mode));
-    state.sensitivityMultiplier.setData(std::clamp(config.sensitivity.multiplier, kMultiplierMin, kMultiplierMax));
+    state.sensitivityMultiplierPercent.setData(
+        std::clamp(toPercent(config.sensitivity.multiplier), kMultiplierMinPc, kMultiplierMaxPc)
+    );
     state.cinematicEnabled.setData(config.cinematic.enabled);
-    state.cinematicStrength.setData(std::clamp(config.cinematic.strength, kCinematicMin, kCinematicMax));
+    state.cinematicStrengthPercent.setData(
+        std::clamp(toPercent(config.cinematic.strength), kCinematicMinPc, kCinematicMaxPc)
+    );
 }
 
 /// Reads the controls back into a config. Anything the user typed that does not name a key is
@@ -104,15 +121,15 @@ Config collect(FormState& state, Config const& previous) {
     config.zoom.activation             = static_cast<ActivationMode>(static_cast<int>(state.activation.getData()));
     config.zoom.factor                 = state.factor.getData();
     config.zoom.scrollToAdjust         = state.scrollToAdjust.getData();
-    config.zoom.scrollStep             = state.scrollStep.getData();
+    config.zoom.scrollStep             = fromPercent(state.scrollStepPercent.getData());
     config.zoom.rememberScrolledFactor = state.rememberScrolledFactor.getData();
     config.animation.durationSeconds   = state.durationMillis.getData() / 1000.0;
     config.animation.curve             = static_cast<EasingCurve>(static_cast<int>(state.curve.getData()));
     config.view.hideHand               = state.hideHand.getData();
     config.sensitivity.mode            = static_cast<SensitivityMode>(static_cast<int>(state.sensitivityMode.getData()));
-    config.sensitivity.multiplier      = state.sensitivityMultiplier.getData();
+    config.sensitivity.multiplier      = fromPercent(state.sensitivityMultiplierPercent.getData());
     config.cinematic.enabled           = state.cinematicEnabled.getData();
-    config.cinematic.strength          = std::clamp(state.cinematicStrength.getData(), 0.0, 0.95);
+    config.cinematic.strength          = std::clamp(fromPercent(state.cinematicStrengthPercent.getData()), 0.0, 0.95);
 
     return config;
 }
@@ -183,7 +200,7 @@ void buildAndShow(Player& player) {
             state->durationMillis,
             kDurationMinMs,
             kDurationMaxMs,
-            {.description = "Time spent easing in, and again easing out. 0 snaps instantly.", .step = 10.0}
+            {.description = "Time spent easing in, and again easing out. 0 snaps instantly.", .step = kDurationStepMs}
         )
         .dropdown(
             "Curve",
@@ -214,22 +231,36 @@ void buildAndShow(Player& player) {
     }
         )
         .slider(
-            "Multiplier",
-            state->sensitivityMultiplier,
-            kMultiplierMin,
-            kMultiplierMax,
-            {.description = "Relative mode multiplies this on top; Fixed mode uses it on its own.", .step = 0.05}
+            "Multiplier (%)",
+            state->sensitivityMultiplierPercent,
+            kMultiplierMinPc,
+            kMultiplierMaxPc,
+            {.description = "100% leaves the mode's own result alone. Relative multiplies this on top; Fixed uses it by itself.",
+             .step        = kPercentStep}
         )
         .divider();
 
     form.header("Cinematic camera")
         .toggle("Smooth the camera while zoomed", state->cinematicEnabled)
-        .slider("Smoothing", state->cinematicStrength, kCinematicMin, kCinematicMax, {.description = "Higher is heavier. 0 is no smoothing.", .step = 0.05})
+        .slider(
+            "Smoothing (%)",
+            state->cinematicStrengthPercent,
+            kCinematicMinPc,
+            kCinematicMaxPc,
+            {.description = "Higher is heavier. 0% is no smoothing.", .step = kPercentStep}
+        )
         .divider();
 
     form.header("Scroll wheel")
         .toggle("Adjust magnification with the wheel", state->scrollToAdjust, {.description = "While zoomed, the wheel changes the magnification instead of the hotbar."})
-        .slider("Wheel step", state->scrollStep, kScrollStepMin, kScrollStepMax, {.description = "How much one notch multiplies the magnification by.", .step = 0.05})
+        .slider(
+            "Wheel step (%)",
+            state->scrollStepPercent,
+            kScrollStepMinPc,
+            kScrollStepMaxPc,
+            {.description = "How much one notch multiplies the magnification by. 120% steps by a fifth each time.",
+             .step        = kPercentStep}
+        )
         .toggle("Remember wheel adjustment", state->rememberScrolledFactor, {.description = "Keep the scrolled magnification for the next zoom instead of returning to the slider value."})
         .divider();
 

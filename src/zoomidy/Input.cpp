@@ -64,6 +64,11 @@ bool                                  gHasLastMotion = false;
 /// setting scales this linearly, so the default 60% works out to 300 ms.
 constexpr double kCinematicMaxTimeConstant = 0.5;
 
+/// A gap between motion events longer than this counts as the player having stopped, rather than
+/// as part of one continuous turn. Well above any mouse's polling interval -- the captures show
+/// 1-5 ms at 1000 Hz -- and well below a deliberate pause.
+constexpr double kCinematicIdleGap = 0.05;
+
 /// Remaining mouse events to dump to the log for `/zoomidy debug`. Counts down to zero so the
 /// diagnostic cannot be left on by accident.
 int gDebugEventsLeft = 0;
@@ -76,26 +81,43 @@ void resetFilters() {
     gHasLastMotion = false;
 }
 
-/// How far the smoothed rate moves towards the raw one on this event.
+struct CinematicStep {
+    /// How far the smoothed rate moves towards the raw one on this event.
+    double blend = 1.0;
+
+    /// Throw the smoothed rate away and start from this event instead.
+    bool restart = true;
+};
+
+/// Works out how this event should be filtered from how long it has been since the last one.
 ///
-/// Derived from how long it has been since the last event, so the perceived lag stays the same
-/// whether the mouse reports at 125 Hz or 1000 Hz. A long gap drives this to 1, which makes the
-/// first movement after a pause fully responsive instead of replaying stale motion.
-double cinematicBlend(double strength) {
+/// A gap longer than any polling interval means the player stopped moving the mouse, and the
+/// camera stopped with it -- nothing is emitted between events. Whatever rate the filter was
+/// holding describes a turn that already finished, so it is discarded rather than blended into
+/// the movement that ends the pause.
+CinematicStep cinematicStep(double strength) {
     double const tau = std::clamp(strength, 0.0, 1.0) * kCinematicMaxTimeConstant;
     if (tau <= 0.0) {
-        return 1.0;
+        return {};
     }
 
     auto const now = std::chrono::steady_clock::now();
-    double     dt  = kCinematicMaxTimeConstant * 8.0;
-    if (gHasLastMotion) {
-        dt = std::chrono::duration_cast<std::chrono::duration<double>>(now - gLastMotion).count();
+    if (!gHasLastMotion) {
+        gLastMotion    = now;
+        gHasLastMotion = true;
+        return {};
     }
-    gLastMotion    = now;
-    gHasLastMotion = true;
 
-    return 1.0 - std::exp(-std::max(0.0, dt) / tau);
+    double const dt = std::max(
+        0.0,
+        std::chrono::duration_cast<std::chrono::duration<double>>(now - gLastMotion).count()
+    );
+    gLastMotion = now;
+
+    if (dt > kCinematicIdleGap) {
+        return {};
+    }
+    return {.blend = 1.0 - std::exp(-dt / tau), .restart = false};
 }
 
 /// True when the player is actually flying the camera around: pointer locked, no chat box, no
@@ -130,22 +152,31 @@ double sensitivityFactor() {
 
 /// Applies the sensitivity scale, then the cinematic smoothing, then quantises back to the whole
 /// numbers the client expects while carrying the remainder forward.
-short filterAxis(short raw, double factor, double blend, double& residual, double& smoothed) {
-    double value = static_cast<double>(raw) * factor;
+short filterAxis(short raw, double factor, CinematicStep step, double& residual, double& smoothed) {
+    double const value = static_cast<double>(raw) * factor;
 
     // A one-pole low-pass on the turn rate. While the mouse keeps moving the smoothed rate
     // converges on the real one, so a sustained drag tracks the mouse 1:1 and only the start of
-    // the movement lags. Nothing is banked, so there is never a debt to discharge as a jump.
-    //
-    // The cost is that the tail of a movement is dropped rather than coasted out, so a flick
-    // lands slightly short. That is the side to err on: undershooting by a fraction of a turn is
-    // easy to correct for, whereas the camera lurching on its own is not.
-    smoothed += (value - smoothed) * blend;
-    value     = smoothed;
+    // the movement lags.
+    if (step.restart) {
+        smoothed = value;
+    } else {
+        smoothed += (value - smoothed) * step.blend;
+    }
 
-    value   += residual;
-    double const rounded = std::round(value);
-    residual = value - rounded;
+    // The filter is only ever allowed to slow the camera down, never to speed it up or turn it
+    // the other way. It cannot create motion -- nothing is emitted between mouse events -- so any
+    // rate it is still holding when a movement ends describes a turn that is over, and letting
+    // that out would move the camera further than the player moved the mouse.
+    //
+    // The cost is that the tail of a flick is dropped rather than coasted out, so a turn lands
+    // slightly short. That is the side to err on: undershooting by a fraction of a turn is easy
+    // to correct for, whereas a camera that moves on its own is not.
+    double outgoing = std::clamp(smoothed, std::min(0.0, value), std::max(0.0, value));
+
+    outgoing += residual;
+    double const rounded = std::round(outgoing);
+    residual             = outgoing - rounded;
 
     return static_cast<short>(
         std::clamp(rounded, static_cast<double>(std::numeric_limits<short>::min()), static_cast<double>(std::numeric_limits<short>::max()))
@@ -251,14 +282,14 @@ void onMouseInput(ll::event::MouseInputEvent& ev) {
         return;
     }
 
-    // Both axes share one blend factor, and it is computed once: asking for it twice would
-    // advance the clock in between and tilt the smoothing towards whichever axis went second.
-    // With cinematic off the blend is 1, which keeps the smoothed rate tracking the real one so
-    // that switching the option on mid-turn does not jolt.
-    double const blend = cinematic ? cinematicBlend(strength) : 1.0;
+    // Both axes share one step, and it is computed once: asking for it twice would advance the
+    // clock in between and tilt the smoothing towards whichever axis went second. With cinematic
+    // off the default step restarts every event, which keeps the smoothed rate tracking the real
+    // one so that switching the option on mid-turn does not jolt.
+    CinematicStep const step = cinematic ? cinematicStep(strength) : CinematicStep{};
 
-    ev.dx() = filterAxis(ev.dx(), factor, blend, gResidualX, gCinematicX);
-    ev.dy() = filterAxis(ev.dy(), factor, blend, gResidualY, gCinematicY);
+    ev.dx() = filterAxis(ev.dx(), factor, step, gResidualX, gCinematicX);
+    ev.dy() = filterAxis(ev.dy(), factor, step, gResidualY, gCinematicY);
 }
 
 void onClientTick(ll::event::ClientLevelTickEvent&) {

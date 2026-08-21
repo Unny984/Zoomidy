@@ -43,18 +43,25 @@ int gHeldKeyCode = 0;
 double gResidualX = 0.0;
 double gResidualY = 0.0;
 
-/// Motion the cinematic filter is still paying out over subsequent events.
+/// The cinematic filter's running estimate of how fast the camera should be turning, one per
+/// axis. This is a smoothed *rate*, not a backlog of motion still owed.
+///
+/// An earlier version banked the difference and paid it out later, which conserved every count of
+/// mouse movement but behaved badly at the edges: stopping the mouse froze the camera with a debt
+/// outstanding, and the next flick discharged all of it at once as a jump. Nothing can be emitted
+/// between mouse events -- the filter only ever runs when one arrives -- so a debt that outlives
+/// the motion has nowhere to go except into the event that ends the pause.
 double gCinematicX = 0.0;
 double gCinematicY = 0.0;
 
-/// When the last motion event arrived, so the cinematic filter can work in real time instead of
-/// per event. Mouse events land every 3-5 ms; a fixed per-event release fraction therefore decays
-/// to nothing within a few milliseconds and produces no visible lag whatsoever.
+/// When the last motion event arrived, so the filter can work in real time instead of per event.
+/// Events land 1-5 ms apart, so a fixed per-event blend would decay within a few milliseconds and
+/// would also change character with the mouse's polling rate.
 std::chrono::steady_clock::time_point gLastMotion{};
 bool                                  gHasLastMotion = false;
 
-/// Lag at the maximum smoothing setting, in seconds. The setting scales this linearly, so the
-/// default 60% works out to a 300 ms time constant -- heavy enough to feel, short enough to aim.
+/// How long the camera takes to catch up at the maximum smoothing setting, in seconds. The
+/// setting scales this linearly, so the default 60% works out to 300 ms.
 constexpr double kCinematicMaxTimeConstant = 0.5;
 
 /// Remaining mouse events to dump to the log for `/zoomidy debug`. Counts down to zero so the
@@ -69,12 +76,12 @@ void resetFilters() {
     gHasLastMotion = false;
 }
 
-/// The fraction of the outstanding motion the cinematic filter releases on this event.
+/// How far the smoothed rate moves towards the raw one on this event.
 ///
-/// Derived from how long it has been since the last one, so the perceived lag stays the same
-/// whether the mouse reports at 125 Hz or 1000 Hz. A long gap drives this towards 1, which drains
-/// whatever the filter still owes rather than stranding it.
-double cinematicRelease(double strength) {
+/// Derived from how long it has been since the last event, so the perceived lag stays the same
+/// whether the mouse reports at 125 Hz or 1000 Hz. A long gap drives this to 1, which makes the
+/// first movement after a pause fully responsive instead of replaying stale motion.
+double cinematicBlend(double strength) {
     double const tau = std::clamp(strength, 0.0, 1.0) * kCinematicMaxTimeConstant;
     if (tau <= 0.0) {
         return 1.0;
@@ -123,16 +130,18 @@ double sensitivityFactor() {
 
 /// Applies the sensitivity scale, then the cinematic smoothing, then quantises back to the whole
 /// numbers the client expects while carrying the remainder forward.
-short filterAxis(short raw, double factor, double release, double& residual, double& carry) {
+short filterAxis(short raw, double factor, double blend, double& residual, double& smoothed) {
     double value = static_cast<double>(raw) * factor;
 
-    if (release < 1.0) {
-        // A one-pole low-pass that conserves total movement: whatever is held back this event is
-        // released over the following ones, which is what gives the camera its weight.
-        carry += value;
-        value  = carry * release;
-        carry -= value;
-    }
+    // A one-pole low-pass on the turn rate. While the mouse keeps moving the smoothed rate
+    // converges on the real one, so a sustained drag tracks the mouse 1:1 and only the start of
+    // the movement lags. Nothing is banked, so there is never a debt to discharge as a jump.
+    //
+    // The cost is that the tail of a movement is dropped rather than coasted out, so a flick
+    // lands slightly short. That is the side to err on: undershooting by a fraction of a turn is
+    // easy to correct for, whereas the camera lurching on its own is not.
+    smoothed += (value - smoothed) * blend;
+    value     = smoothed;
 
     value   += residual;
     double const rounded = std::round(value);
@@ -242,12 +251,14 @@ void onMouseInput(ll::event::MouseInputEvent& ev) {
         return;
     }
 
-    // Both axes share one release fraction, and it is computed once: asking for it twice would
+    // Both axes share one blend factor, and it is computed once: asking for it twice would
     // advance the clock in between and tilt the smoothing towards whichever axis went second.
-    double const release = cinematic ? cinematicRelease(strength) : 1.0;
+    // With cinematic off the blend is 1, which keeps the smoothed rate tracking the real one so
+    // that switching the option on mid-turn does not jolt.
+    double const blend = cinematic ? cinematicBlend(strength) : 1.0;
 
-    ev.dx() = filterAxis(ev.dx(), factor, release, gResidualX, gCinematicX);
-    ev.dy() = filterAxis(ev.dy(), factor, release, gResidualY, gCinematicY);
+    ev.dx() = filterAxis(ev.dx(), factor, blend, gResidualX, gCinematicX);
+    ev.dy() = filterAxis(ev.dy(), factor, blend, gResidualY, gCinematicY);
 }
 
 void onClientTick(ll::event::ClientLevelTickEvent&) {

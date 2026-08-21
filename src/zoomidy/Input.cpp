@@ -164,15 +164,16 @@ short filterAxis(short raw, double factor, CinematicStep step, double& residual,
         smoothed += (value - smoothed) * step.blend;
     }
 
-    // The filter is only ever allowed to slow the camera down, never to speed it up or turn it
-    // the other way. It cannot create motion -- nothing is emitted between mouse events -- so any
-    // rate it is still holding when a movement ends describes a turn that is over, and letting
-    // that out would move the camera further than the player moved the mouse.
+    // Nothing else is done to the value here, and in particular nothing per-axis and non-linear.
+    // An earlier version clamped each axis to its own raw delta, which turned a circular mouse
+    // movement into a square: on a circle one axis is always decelerating while the other
+    // accelerates, so the clamp let the decelerating axis through at full rate while holding the
+    // accelerating one back, and the motion collapsed onto whichever axis was ahead.
     //
-    // The cost is that the tail of a flick is dropped rather than coasted out, so a turn lands
-    // slightly short. That is the side to err on: undershooting by a fraction of a turn is easy
-    // to correct for, whereas a camera that moves on its own is not.
-    double outgoing = std::clamp(smoothed, std::min(0.0, value), std::max(0.0, value));
+    // The same blend on both axes is a linear filter, and a linear filter applied equally to x
+    // and y preserves direction -- a circle stays a circle, just lagging behind the mouse. Any
+    // limiting has to act on the vector's length, never on the axes one at a time.
+    double outgoing = smoothed;
 
     outgoing += residual;
     double const rounded = std::round(outgoing);
@@ -250,26 +251,6 @@ void onMouseInput(ll::event::MouseInputEvent& ev) {
     bool const   cinematic = config.cinematic.enabled;
     double const strength  = std::clamp(config.cinematic.strength, 0.0, 0.95);
 
-    if (gDebugEventsLeft > 0) {
-        --gDebugEventsLeft;
-        Zoomidy::getInstance().getSelf().getLogger().info(
-            "mouse action={} data={} x={} y={} dx={} dy={} factor={:.3f} divisor={:.3f} cine={} strength={:.2f}",
-            action,
-            static_cast<int>(ev.buttonData()),
-            ev.x(),
-            ev.y(),
-            ev.dx(),
-            ev.dy(),
-            factor,
-            zoom.currentDivisor(),
-            cinematic,
-            strength
-        );
-        if (gDebugEventsLeft == 0) {
-            Zoomidy::getInstance().getSelf().getLogger().info("mouse debug capture finished.");
-        }
-    }
-
     if (factor == 1.0 && !cinematic) {
         return;
     }
@@ -283,13 +264,40 @@ void onMouseInput(ll::event::MouseInputEvent& ev) {
     }
 
     // Both axes share one step, and it is computed once: asking for it twice would advance the
-    // clock in between and tilt the smoothing towards whichever axis went second. With cinematic
-    // off the default step restarts every event, which keeps the smoothed rate tracking the real
-    // one so that switching the option on mid-turn does not jolt.
+    // clock in between and tilt the smoothing towards whichever axis went second. Using the same
+    // blend on both is also what keeps the filter linear, and therefore what keeps it from
+    // bending the direction the player is turning. With cinematic off the default step restarts
+    // every event, which keeps the smoothed rate tracking the real one so that switching the
+    // option on mid-turn does not jolt.
     CinematicStep const step = cinematic ? cinematicStep(strength) : CinematicStep{};
 
-    ev.dx() = filterAxis(ev.dx(), factor, step, gResidualX, gCinematicX);
-    ev.dy() = filterAxis(ev.dy(), factor, step, gResidualY, gCinematicY);
+    short const rawDx = ev.dx();
+    short const rawDy = ev.dy();
+
+    ev.dx() = filterAxis(rawDx, factor, step, gResidualX, gCinematicX);
+    ev.dy() = filterAxis(rawDy, factor, step, gResidualY, gCinematicY);
+
+    if (gDebugEventsLeft > 0) {
+        --gDebugEventsLeft;
+        Zoomidy::getInstance().getSelf().getLogger().info(
+            "mouse action={} in=({},{}) out=({},{}) factor={:.3f} divisor={:.3f} cine={} "
+            "strength={:.2f} blend={:.4f} restart={}",
+            action,
+            rawDx,
+            rawDy,
+            ev.dx(),
+            ev.dy(),
+            factor,
+            zoom.currentDivisor(),
+            cinematic,
+            strength,
+            step.blend,
+            step.restart
+        );
+        if (gDebugEventsLeft == 0) {
+            Zoomidy::getInstance().getSelf().getLogger().info("mouse debug capture finished.");
+        }
+    }
 }
 
 void onClientTick(ll::event::ClientLevelTickEvent&) {

@@ -21,9 +21,13 @@ Built as a **client-side [LeviLamina](https://github.com/LiteLDev/LeviLamina) mo
 ## Requirements
 
 - Windows 10/11 x64
-- Minecraft Bedrock Edition **26.20.x** client
-- LeviLamina **26.20.x**, installed on the client (via
-  [LeviLauncher](https://lamina.levimc.org/user_guides/install_on_client/))
+- LeviLamina **26.20.x** installed on the client, via
+  [LeviLauncher](https://lamina.levimc.org/user_guides/install_on_client/)
+- Minecraft Bedrock Edition client **1.26.20.4** — the version LeviLamina 26.20.x supports
+
+> The Store copy of Minecraft is usually newer than whatever LeviLamina supports, and the hooks
+> here are resolved against the exact game binary. Use LeviLauncher to download and switch to the
+> supported client version; it keeps it separate from your Store install.
 
 ## Install
 

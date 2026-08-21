@@ -1,6 +1,7 @@
 #include "zoomidy/Input.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 
@@ -42,19 +43,52 @@ int gHeldKeyCode = 0;
 double gResidualX = 0.0;
 double gResidualY = 0.0;
 
-/// Motion the cinematic filter is still paying out over subsequent frames.
+/// Motion the cinematic filter is still paying out over subsequent events.
 double gCinematicX = 0.0;
 double gCinematicY = 0.0;
+
+/// When the last motion event arrived, so the cinematic filter can work in real time instead of
+/// per event. Mouse events land every 3-5 ms; a fixed per-event release fraction therefore decays
+/// to nothing within a few milliseconds and produces no visible lag whatsoever.
+std::chrono::steady_clock::time_point gLastMotion{};
+bool                                  gHasLastMotion = false;
+
+/// Lag at the maximum smoothing setting, in seconds. The setting scales this linearly, so the
+/// default 60% works out to a 300 ms time constant -- heavy enough to feel, short enough to aim.
+constexpr double kCinematicMaxTimeConstant = 0.5;
 
 /// Remaining mouse events to dump to the log for `/zoomidy debug`. Counts down to zero so the
 /// diagnostic cannot be left on by accident.
 int gDebugEventsLeft = 0;
 
 void resetFilters() {
-    gResidualX  = 0.0;
-    gResidualY  = 0.0;
-    gCinematicX = 0.0;
-    gCinematicY = 0.0;
+    gResidualX     = 0.0;
+    gResidualY     = 0.0;
+    gCinematicX    = 0.0;
+    gCinematicY    = 0.0;
+    gHasLastMotion = false;
+}
+
+/// The fraction of the outstanding motion the cinematic filter releases on this event.
+///
+/// Derived from how long it has been since the last one, so the perceived lag stays the same
+/// whether the mouse reports at 125 Hz or 1000 Hz. A long gap drives this towards 1, which drains
+/// whatever the filter still owes rather than stranding it.
+double cinematicRelease(double strength) {
+    double const tau = std::clamp(strength, 0.0, 1.0) * kCinematicMaxTimeConstant;
+    if (tau <= 0.0) {
+        return 1.0;
+    }
+
+    auto const now = std::chrono::steady_clock::now();
+    double     dt  = kCinematicMaxTimeConstant * 8.0;
+    if (gHasLastMotion) {
+        dt = std::chrono::duration_cast<std::chrono::duration<double>>(now - gLastMotion).count();
+    }
+    gLastMotion    = now;
+    gHasLastMotion = true;
+
+    return 1.0 - std::exp(-std::max(0.0, dt) / tau);
 }
 
 /// True when the player is actually flying the camera around: pointer locked, no chat box, no
@@ -89,14 +123,14 @@ double sensitivityFactor() {
 
 /// Applies the sensitivity scale, then the cinematic smoothing, then quantises back to the whole
 /// numbers the client expects while carrying the remainder forward.
-short filterAxis(short raw, double factor, bool cinematic, double strength, double& residual, double& carry) {
+short filterAxis(short raw, double factor, double release, double& residual, double& carry) {
     double value = static_cast<double>(raw) * factor;
 
-    if (cinematic) {
+    if (release < 1.0) {
         // A one-pole low-pass that conserves total movement: whatever is held back this event is
         // released over the following ones, which is what gives the camera its weight.
         carry += value;
-        value  = carry * (1.0 - strength);
+        value  = carry * release;
         carry -= value;
     }
 
@@ -179,7 +213,7 @@ void onMouseInput(ll::event::MouseInputEvent& ev) {
     if (gDebugEventsLeft > 0) {
         --gDebugEventsLeft;
         Zoomidy::getInstance().getSelf().getLogger().info(
-            "mouse action={} data={} x={} y={} dx={} dy={} factor={:.3f} divisor={:.3f}",
+            "mouse action={} data={} x={} y={} dx={} dy={} factor={:.3f} divisor={:.3f} cine={} strength={:.2f}",
             action,
             static_cast<int>(ev.buttonData()),
             ev.x(),
@@ -187,7 +221,9 @@ void onMouseInput(ll::event::MouseInputEvent& ev) {
             ev.dx(),
             ev.dy(),
             factor,
-            zoom.currentDivisor()
+            zoom.currentDivisor(),
+            cinematic,
+            strength
         );
         if (gDebugEventsLeft == 0) {
             Zoomidy::getInstance().getSelf().getLogger().info("mouse debug capture finished.");
@@ -206,8 +242,12 @@ void onMouseInput(ll::event::MouseInputEvent& ev) {
         return;
     }
 
-    ev.dx() = filterAxis(ev.dx(), factor, cinematic, strength, gResidualX, gCinematicX);
-    ev.dy() = filterAxis(ev.dy(), factor, cinematic, strength, gResidualY, gCinematicY);
+    // Both axes share one release fraction, and it is computed once: asking for it twice would
+    // advance the clock in between and tilt the smoothing towards whichever axis went second.
+    double const release = cinematic ? cinematicRelease(strength) : 1.0;
+
+    ev.dx() = filterAxis(ev.dx(), factor, release, gResidualX, gCinematicX);
+    ev.dy() = filterAxis(ev.dy(), factor, release, gResidualY, gCinematicY);
 }
 
 void onClientTick(ll::event::ClientLevelTickEvent&) {

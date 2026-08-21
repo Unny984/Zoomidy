@@ -74,7 +74,8 @@ struct CinematicSettings {
     /// Smooth the camera while zoomed in, like the Java "cinematic camera".
     bool enabled = false;
 
-    /// 0 is no smoothing, values approaching 1 are very heavy. Clamped to [0, 0.95].
+    /// How much the camera lags behind the mouse, as a fraction of the half-second maximum.
+    /// 0 is no smoothing; 0.6 gives a 300 ms time constant. Clamped to [0, 0.95].
     double strength = 0.6;
 };
 

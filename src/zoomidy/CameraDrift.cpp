@@ -16,13 +16,19 @@
 #include "mc/deps/input/MouseAction.h"
 #include "mc/deps/input/MouseMapper.h"
 
+#include "zoomidy/Input.h"
 #include "zoomidy/Zoomidy.h"
 
 namespace zoomidy::drift {
 
 namespace {
 
-/// Motion the camera still owes, in mouse counts, already scaled for sensitivity.
+/// Motion the camera still owes, in raw mouse counts.
+///
+/// Deliberately *not* scaled for sensitivity on the way in. The zoom animates over 200 ms by
+/// default, so movement banked before the zoom engaged would otherwise be paid out at the
+/// unzoomed sensitivity and send the camera flying once the zoom had arrived. The scale belongs
+/// at the moment the movement is applied, not at the moment it is recorded.
 double gPendingX = 0.0;
 double gPendingY = 0.0;
 
@@ -102,13 +108,17 @@ void drainOneFrame() {
     // Both axes are released by the same fraction. That keeps the drain linear and therefore
     // keeps it from bending the direction of the turn -- a circular movement has to come out
     // circular, which a per-axis rule would not give.
-    double const outX = gPendingX * release;
-    double const outY = gPendingY * release;
-    gPendingX -= outX;
-    gPendingY -= outY;
+    double const rawOutX = gPendingX * release;
+    double const rawOutY = gPendingY * release;
+    gPendingX -= rawOutX;
+    gPendingY -= rawOutY;
 
-    short const dx = quantise(outX, gResidualX);
-    short const dy = quantise(outY, gResidualY);
+    // Scaled here, against the zoom as it stands this frame, rather than against whatever it was
+    // when the movement came in.
+    double const factor = sensitivityFactor();
+
+    short const dx = quantise(rawOutX * factor, gResidualX);
+    short const dy = quantise(rawOutY * factor, gResidualY);
     if (dx == 0 && dy == 0) {
         return;
     }

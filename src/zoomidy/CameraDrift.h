@@ -13,8 +13,11 @@ namespace zoomidy::drift {
 /// Only active while the cinematic option is on. With it off, nothing here runs and no events are
 /// synthesised.
 
-/// Takes a mouse delta, already scaled for sensitivity, into the pool of motion still owed.
-/// The caller must zero the event's own delta afterwards, or the movement is applied twice.
+/// Takes a raw mouse delta into the pool of motion still owed. The caller must zero the event's
+/// own delta afterwards, or the movement is applied twice.
+///
+/// Pass the delta unscaled. Sensitivity is applied when the motion is paid out, so that movement
+/// banked before the zoom engaged is slowed down by the zoom that has arrived since.
 void absorb(double dx, double dy);
 
 /// True while the per-frame drain is pushing its own event through the mouse device, so the input

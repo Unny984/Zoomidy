@@ -59,7 +59,8 @@ bool isInGameplay() {
     return client && client->getMouseGrabbed();
 }
 
-/// How much the mouse look should be scaled down right now, following the zoom animation.
+} // namespace
+
 double sensitivityFactor() {
     auto const& settings = Zoomidy::getInstance().getConfig().sensitivity;
     auto&       zoom     = ZoomState::getInstance();
@@ -81,6 +82,8 @@ double sensitivityFactor() {
 
     return std::max(0.01, factor * settings.multiplier);
 }
+
+namespace {
 
 /// Applies the sensitivity scale and quantises back to the whole numbers the client expects,
 /// carrying the sub-count remainder forward so that slow aiming survives a heavy scale.
@@ -186,7 +189,11 @@ void onMouseInput(ll::event::MouseInputEvent& ev) {
         // Hand the movement to the drift and take it out of this event. The drift pays it back
         // over the following frames, which is the only way the camera can keep turning after the
         // mouse stops -- there are no mouse events left to carry it.
-        drift::absorb(static_cast<double>(rawDx) * factor, static_cast<double>(rawDy) * factor);
+        //
+        // Passed raw: the drift applies sensitivity as it pays out, so a flick that starts before
+        // the zoom finishes arriving is slowed by the zoom rather than by whatever the scale
+        // happened to be when the mouse moved.
+        drift::absorb(rawDx, rawDy);
         ev.dx() = 0;
         ev.dy() = 0;
     } else {

@@ -15,7 +15,7 @@ Built as a **client-side [LeviLamina](https://github.com/LiteLDev/LeviLamina) mo
 | **Adjustable magnification** | 4x by default; the scroll wheel changes it live while zoomed. |
 | **Hide the hand** | The first-person arm and held item disappear while zoomed. |
 | **Sensitivity scaling** | Relative (follows the zoom), fixed, or off. |
-| **Cinematic camera** | Optional weighted camera while zoomed. |
+| **Cinematic camera** | Optional. The camera lags on the way in and coasts out after a flick. |
 | **In-game settings screen** | `/zoomidy` opens a real Minecraft form. |
 
 ## Requirements
@@ -34,7 +34,7 @@ Built as a **client-side [LeviLamina](https://github.com/LiteLDev/LeviLamina) mo
 Drop the built `zoomidy` folder into your client's `mods/` directory, or install with `lip`:
 
 ```bash
-lip install github.com/unnyminer2/zoomidy
+lip install github.com/Unny984/Zoomidy
 ```
 
 ## Usage
@@ -109,9 +109,22 @@ on and needs no permissions there.
 | The zoom | Hooks `LevelRendererPlayer::getFov` and divides the answer. |
 | Hiding the hand | Skips `ItemInHandRenderer::renderFirstPerson` for the frame. |
 | The key | Listens to `ll::event::KeyInputEvent`, gated on the pointer being locked, so it does not fire while you are typing in chat. |
-| Sensitivity & cinematic | Rewrites `dx`/`dy` on `ll::event::MouseInputEvent`, carrying the sub-pixel remainder forward so slow aiming survives a 0.25x scale. |
+| Sensitivity | Rewrites `dx`/`dy` on `ll::event::MouseInputEvent`, carrying the sub-count remainder forward so slow aiming survives a 0.25x scale. |
+| Cinematic camera | Banks the movement, then drains it a frame at a time from a `MouseMapper::tick` hook and feeds it back through `Mouse::feed`. |
 | Scroll to adjust | Cancels the wheel event while zoomed, so the hotbar does not move with it. |
 | Settings screen | `ll::ui::CustomForm`, built on the server thread. |
+
+### Why the camera coast needs its own hook
+
+A camera that keeps turning after the mouse stops cannot be driven by mouse events, because during
+a coast there are none. Filtering the events in place can only ever slow the camera down. So the
+movement is banked instead and paid out from `MouseMapper::tick`, which runs once per frame on the
+same thread the real events arrive on, immediately before the queue it is handed gets drained.
+
+Guards, since this synthesises input rather than only filtering it: the banked motion is capped,
+the per-frame step is capped so a hitch cannot release it all at once, a re-entrancy flag keeps
+the synthetic events out of the filter that produced them, and the drain stops entirely once the
+pointer is released so it can never push movement into an open menu.
 
 ### A note on the zoom curve
 

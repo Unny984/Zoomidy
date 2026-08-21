@@ -59,8 +59,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - In-game settings form via `/zoomidy`, plus sub-commands that work on remote servers.
 
 [0.3.1]: https://github.com/Unny984/Zoomidy/releases/tag/v0.3.1
-[0.3.0]: https://github.com/Unny984/Zoomidy/releases/tag/v0.3.0
-[0.2.4]: https://github.com/Unny984/Zoomidy/releases/tag/v0.2.4
-[0.2.1]: https://github.com/Unny984/Zoomidy/releases/tag/v0.2.1
-[0.2.0]: https://github.com/Unny984/Zoomidy/releases/tag/v0.2.0
-[0.1.0]: https://github.com/Unny984/Zoomidy/releases/tag/v0.1.0

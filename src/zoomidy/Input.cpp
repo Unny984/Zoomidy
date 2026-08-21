@@ -1,7 +1,6 @@
 #include "zoomidy/Input.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <limits>
 
@@ -16,6 +15,7 @@
 #include "mc/client/game/ClientInstance.h"
 #include "mc/deps/input/MouseAction.h"
 
+#include "zoomidy/CameraDrift.h"
 #include "zoomidy/ZoomState.h"
 #include "zoomidy/Zoomidy.h"
 
@@ -43,81 +43,13 @@ int gHeldKeyCode = 0;
 double gResidualX = 0.0;
 double gResidualY = 0.0;
 
-/// The cinematic filter's running estimate of how fast the camera should be turning, one per
-/// axis. This is a smoothed *rate*, not a backlog of motion still owed.
-///
-/// An earlier version banked the difference and paid it out later, which conserved every count of
-/// mouse movement but behaved badly at the edges: stopping the mouse froze the camera with a debt
-/// outstanding, and the next flick discharged all of it at once as a jump. Nothing can be emitted
-/// between mouse events -- the filter only ever runs when one arrives -- so a debt that outlives
-/// the motion has nowhere to go except into the event that ends the pause.
-double gCinematicX = 0.0;
-double gCinematicY = 0.0;
-
-/// When the last motion event arrived, so the filter can work in real time instead of per event.
-/// Events land 1-5 ms apart, so a fixed per-event blend would decay within a few milliseconds and
-/// would also change character with the mouse's polling rate.
-std::chrono::steady_clock::time_point gLastMotion{};
-bool                                  gHasLastMotion = false;
-
-/// How long the camera takes to catch up at the maximum smoothing setting, in seconds. The
-/// setting scales this linearly, so the default 60% works out to 300 ms.
-constexpr double kCinematicMaxTimeConstant = 0.5;
-
-/// A gap between motion events longer than this counts as the player having stopped, rather than
-/// as part of one continuous turn. Well above any mouse's polling interval -- the captures show
-/// 1-5 ms at 1000 Hz -- and well below a deliberate pause.
-constexpr double kCinematicIdleGap = 0.05;
-
 /// Remaining mouse events to dump to the log for `/zoomidy debug`. Counts down to zero so the
 /// diagnostic cannot be left on by accident.
 int gDebugEventsLeft = 0;
 
 void resetFilters() {
-    gResidualX     = 0.0;
-    gResidualY     = 0.0;
-    gCinematicX    = 0.0;
-    gCinematicY    = 0.0;
-    gHasLastMotion = false;
-}
-
-struct CinematicStep {
-    /// How far the smoothed rate moves towards the raw one on this event.
-    double blend = 1.0;
-
-    /// Throw the smoothed rate away and start from this event instead.
-    bool restart = true;
-};
-
-/// Works out how this event should be filtered from how long it has been since the last one.
-///
-/// A gap longer than any polling interval means the player stopped moving the mouse, and the
-/// camera stopped with it -- nothing is emitted between events. Whatever rate the filter was
-/// holding describes a turn that already finished, so it is discarded rather than blended into
-/// the movement that ends the pause.
-CinematicStep cinematicStep(double strength) {
-    double const tau = std::clamp(strength, 0.0, 1.0) * kCinematicMaxTimeConstant;
-    if (tau <= 0.0) {
-        return {};
-    }
-
-    auto const now = std::chrono::steady_clock::now();
-    if (!gHasLastMotion) {
-        gLastMotion    = now;
-        gHasLastMotion = true;
-        return {};
-    }
-
-    double const dt = std::max(
-        0.0,
-        std::chrono::duration_cast<std::chrono::duration<double>>(now - gLastMotion).count()
-    );
-    gLastMotion = now;
-
-    if (dt > kCinematicIdleGap) {
-        return {};
-    }
-    return {.blend = 1.0 - std::exp(-dt / tau), .restart = false};
+    gResidualX = 0.0;
+    gResidualY = 0.0;
 }
 
 /// True when the player is actually flying the camera around: pointer locked, no chat box, no
@@ -150,38 +82,18 @@ double sensitivityFactor() {
     return std::max(0.01, factor * settings.multiplier);
 }
 
-/// Applies the sensitivity scale, then the cinematic smoothing, then quantises back to the whole
-/// numbers the client expects while carrying the remainder forward.
-short filterAxis(short raw, double factor, CinematicStep step, double& residual, double& smoothed) {
-    double const value = static_cast<double>(raw) * factor;
+/// Applies the sensitivity scale and quantises back to the whole numbers the client expects,
+/// carrying the sub-count remainder forward so that slow aiming survives a heavy scale.
+short filterAxis(short raw, double factor, double& residual) {
+    double const value   = static_cast<double>(raw) * factor + residual;
+    double const rounded = std::round(value);
+    residual             = value - rounded;
 
-    // A one-pole low-pass on the turn rate. While the mouse keeps moving the smoothed rate
-    // converges on the real one, so a sustained drag tracks the mouse 1:1 and only the start of
-    // the movement lags.
-    if (step.restart) {
-        smoothed = value;
-    } else {
-        smoothed += (value - smoothed) * step.blend;
-    }
-
-    // Nothing else is done to the value here, and in particular nothing per-axis and non-linear.
-    // An earlier version clamped each axis to its own raw delta, which turned a circular mouse
-    // movement into a square: on a circle one axis is always decelerating while the other
-    // accelerates, so the clamp let the decelerating axis through at full rate while holding the
-    // accelerating one back, and the motion collapsed onto whichever axis was ahead.
-    //
-    // The same blend on both axes is a linear filter, and a linear filter applied equally to x
-    // and y preserves direction -- a circle stays a circle, just lagging behind the mouse. Any
-    // limiting has to act on the vector's length, never on the axes one at a time.
-    double outgoing = smoothed;
-
-    outgoing += residual;
-    double const rounded = std::round(outgoing);
-    residual             = outgoing - rounded;
-
-    return static_cast<short>(
-        std::clamp(rounded, static_cast<double>(std::numeric_limits<short>::min()), static_cast<double>(std::numeric_limits<short>::max()))
-    );
+    return static_cast<short>(std::clamp(
+        rounded,
+        static_cast<double>(std::numeric_limits<short>::min()),
+        static_cast<double>(std::numeric_limits<short>::max())
+    ));
 }
 
 /// Note that the event is never cancelled. Suppressing the key would mean that binding the zoom
@@ -224,6 +136,12 @@ void onKeyInput(ll::event::KeyInputEvent& ev) {
 }
 
 void onMouseInput(ll::event::MouseInputEvent& ev) {
+    // The drift's own synthetic events come back through this listener. Filtering them again
+    // would scale the sensitivity twice and feed the result straight back into the pool.
+    if (drift::isInjecting()) {
+        return;
+    }
+
     auto&       zoom   = ZoomState::getInstance();
     auto const& config = Zoomidy::getInstance().getConfig();
 
@@ -249,39 +167,37 @@ void onMouseInput(ll::event::MouseInputEvent& ev) {
 
     double const factor    = sensitivityFactor();
     bool const   cinematic = config.cinematic.enabled;
-    double const strength  = std::clamp(config.cinematic.strength, 0.0, 0.95);
 
     if (factor == 1.0 && !cinematic) {
         return;
     }
 
-    // Any event that carries movement is filtered, not just ActionMoveRelative. Which action id
-    // the client uses for a pointer-locked camera is not something the headers pin down, and a
-    // motionless event is a no-op through the filter anyway, so matching on the delta rather than
-    // on the action is both safer and cheaper than guessing.
+    // Any event that carries movement is handled, not just ActionMoveRelative: a capture showed a
+    // pointer-locked camera arriving as ActionMove with the pointer position held still and the
+    // movement in the delta, and a motionless event is a no-op either way.
     if (ev.dx() == 0 && ev.dy() == 0) {
         return;
     }
 
-    // Both axes share one step, and it is computed once: asking for it twice would advance the
-    // clock in between and tilt the smoothing towards whichever axis went second. Using the same
-    // blend on both is also what keeps the filter linear, and therefore what keeps it from
-    // bending the direction the player is turning. With cinematic off the default step restarts
-    // every event, which keeps the smoothed rate tracking the real one so that switching the
-    // option on mid-turn does not jolt.
-    CinematicStep const step = cinematic ? cinematicStep(strength) : CinematicStep{};
-
     short const rawDx = ev.dx();
     short const rawDy = ev.dy();
 
-    ev.dx() = filterAxis(rawDx, factor, step, gResidualX, gCinematicX);
-    ev.dy() = filterAxis(rawDy, factor, step, gResidualY, gCinematicY);
+    if (cinematic) {
+        // Hand the movement to the drift and take it out of this event. The drift pays it back
+        // over the following frames, which is the only way the camera can keep turning after the
+        // mouse stops -- there are no mouse events left to carry it.
+        drift::absorb(static_cast<double>(rawDx) * factor, static_cast<double>(rawDy) * factor);
+        ev.dx() = 0;
+        ev.dy() = 0;
+    } else {
+        ev.dx() = filterAxis(rawDx, factor, gResidualX);
+        ev.dy() = filterAxis(rawDy, factor, gResidualY);
+    }
 
     if (gDebugEventsLeft > 0) {
         --gDebugEventsLeft;
         Zoomidy::getInstance().getSelf().getLogger().info(
-            "mouse action={} in=({},{}) out=({},{}) factor={:.3f} divisor={:.3f} cine={} "
-            "strength={:.2f} blend={:.4f} restart={}",
+            "mouse action={} in=({},{}) out=({},{}) factor={:.3f} divisor={:.3f} cine={} drifting={}",
             action,
             rawDx,
             rawDy,
@@ -290,9 +206,7 @@ void onMouseInput(ll::event::MouseInputEvent& ev) {
             factor,
             zoom.currentDivisor(),
             cinematic,
-            strength,
-            step.blend,
-            step.restart
+            drift::isDraining()
         );
         if (gDebugEventsLeft == 0) {
             Zoomidy::getInstance().getSelf().getLogger().info("mouse debug capture finished.");
@@ -323,6 +237,7 @@ void onClientTick(ll::event::ClientLevelTickEvent&) {
 void onExitLevel(ll::event::ClientExitLevelEvent&) {
     gHeldKeyCode = 0;
     resetFilters();
+    drift::reset();
     ZoomState::getInstance().reset();
 }
 

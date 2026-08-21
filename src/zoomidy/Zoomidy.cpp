@@ -3,6 +3,7 @@
 #include "ll/api/Config.h"
 #include "ll/api/mod/RegisterHelper.h"
 
+#include "zoomidy/CameraDrift.h"
 #include "zoomidy/Command.h"
 #include "zoomidy/Hooks.h"
 #include "zoomidy/Input.h"
@@ -59,6 +60,7 @@ bool Zoomidy::load() {
 
 bool Zoomidy::enable() {
     registerHooks();
+    drift::registerHook();
     registerInputListeners();
     registerCommand();
     getSelf().getLogger().info("Zoomidy ready.");
@@ -68,6 +70,7 @@ bool Zoomidy::enable() {
 bool Zoomidy::disable() {
     unregisterCommand();
     unregisterInputListeners();
+    drift::unregisterHook();
     unregisterHooks();
     ZoomState::getInstance().reset();
     return true;

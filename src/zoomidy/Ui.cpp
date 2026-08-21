@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <format>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "ll/api/service/Bedrock.h"
@@ -26,40 +27,65 @@ namespace {
 
 constexpr ll::ui::ObservableOptions kWritable{.clientWritable = true};
 
+// Bounds of the sliders in the form. A slider hands its control a value clamped into its own
+// range, and that clamped value is what gets read back on close -- so anything the form shows
+// has to be seeded already clamped, or opening the form would quietly rewrite a config.json the
+// user edited by hand.
+constexpr double kDurationMinMs      = 0.0;
+constexpr double kDurationMaxMs      = 2000.0;
+constexpr double kScrollStepMin      = 1.05;
+constexpr double kScrollStepMax      = 2.0;
+constexpr double kMultiplierMin      = 0.05;
+constexpr double kMultiplierMax      = 3.0;
+constexpr double kCinematicMin       = 0.0;
+constexpr double kCinematicMax       = 0.95;
+
+/// The magnification slider's range, sanitised so a hand-edited config can never hand `slider()`
+/// a minimum above its maximum.
+std::pair<double, double> factorRange(Config const& config) {
+    double const lo = std::max(1.0, config.zoom.minFactor);
+    return {lo, std::max(lo + 0.5, config.zoom.maxFactor)};
+}
+
 /// Every control's live value. Held in a shared_ptr so the button callbacks and the completion
 /// callback can all read the same state after the form has left the calling stack frame.
 struct FormState {
-    ll::ui::ObservableString  keyText;
-    ll::ui::ObservableNumber  activation;
-    ll::ui::ObservableNumber  factor;
-    ll::ui::ObservableBoolean scrollToAdjust;
-    ll::ui::ObservableNumber  scrollStep;
-    ll::ui::ObservableBoolean rememberScrolledFactor;
-    ll::ui::ObservableNumber  durationMillis;
-    ll::ui::ObservableNumber  curve;
-    ll::ui::ObservableBoolean hideHand;
-    ll::ui::ObservableNumber  sensitivityMode;
-    ll::ui::ObservableNumber  sensitivityMultiplier;
-    ll::ui::ObservableBoolean cinematicEnabled;
-    ll::ui::ObservableNumber  cinematicStrength;
-    ll::ui::ObservableString  keyStatus;
-
-    explicit FormState(Config const& config)
-    : keyText(keynames::format(config.zoom.keyCode), kWritable),
-      activation(static_cast<double>(config.zoom.activation), kWritable),
-      factor(config.zoom.factor, kWritable),
-      scrollToAdjust(config.zoom.scrollToAdjust, kWritable),
-      scrollStep(config.zoom.scrollStep, kWritable),
-      rememberScrolledFactor(config.zoom.rememberScrolledFactor, kWritable),
-      durationMillis(config.animation.durationSeconds * 1000.0, kWritable),
-      curve(static_cast<double>(config.animation.curve), kWritable),
-      hideHand(config.view.hideHand, kWritable),
-      sensitivityMode(static_cast<double>(config.sensitivity.mode), kWritable),
-      sensitivityMultiplier(config.sensitivity.multiplier, kWritable),
-      cinematicEnabled(config.cinematic.enabled, kWritable),
-      cinematicStrength(config.cinematic.strength, kWritable),
-      keyStatus(std::string{}) {}
+    ll::ui::ObservableString  keyText{std::string{}, kWritable};
+    ll::ui::ObservableNumber  activation{0.0, kWritable};
+    ll::ui::ObservableNumber  factor{1.0, kWritable};
+    ll::ui::ObservableBoolean scrollToAdjust{false, kWritable};
+    ll::ui::ObservableNumber  scrollStep{kScrollStepMin, kWritable};
+    ll::ui::ObservableBoolean rememberScrolledFactor{false, kWritable};
+    ll::ui::ObservableNumber  durationMillis{0.0, kWritable};
+    ll::ui::ObservableNumber  curve{0.0, kWritable};
+    ll::ui::ObservableBoolean hideHand{false, kWritable};
+    ll::ui::ObservableNumber  sensitivityMode{0.0, kWritable};
+    ll::ui::ObservableNumber  sensitivityMultiplier{1.0, kWritable};
+    ll::ui::ObservableBoolean cinematicEnabled{false, kWritable};
+    ll::ui::ObservableNumber  cinematicStrength{0.0, kWritable};
+    ll::ui::ObservableString  keyStatus{std::string{}};
 };
+
+/// Pushes a config into the controls. Used to build the form and again by "Reset to defaults",
+/// so that the reset is visible immediately *and* survives the form being closed -- the close
+/// handler reads these same observables back out.
+void seed(FormState& state, Config const& config) {
+    auto const [factorMin, factorMax] = factorRange(config);
+
+    state.keyText.setData(keynames::format(config.zoom.keyCode));
+    state.activation.setData(static_cast<double>(config.zoom.activation));
+    state.factor.setData(std::clamp(config.zoom.factor, factorMin, factorMax));
+    state.scrollToAdjust.setData(config.zoom.scrollToAdjust);
+    state.scrollStep.setData(std::clamp(config.zoom.scrollStep, kScrollStepMin, kScrollStepMax));
+    state.rememberScrolledFactor.setData(config.zoom.rememberScrolledFactor);
+    state.durationMillis.setData(std::clamp(config.animation.durationSeconds * 1000.0, kDurationMinMs, kDurationMaxMs));
+    state.curve.setData(static_cast<double>(config.animation.curve));
+    state.hideHand.setData(config.view.hideHand);
+    state.sensitivityMode.setData(static_cast<double>(config.sensitivity.mode));
+    state.sensitivityMultiplier.setData(std::clamp(config.sensitivity.multiplier, kMultiplierMin, kMultiplierMax));
+    state.cinematicEnabled.setData(config.cinematic.enabled);
+    state.cinematicStrength.setData(std::clamp(config.cinematic.strength, kCinematicMin, kCinematicMax));
+}
 
 /// Reads the controls back into a config. Anything the user typed that does not name a key is
 /// reported through `keyStatus` and leaves the existing binding in place.
@@ -125,8 +151,11 @@ Player* findHostedServerPlayer() {
 }
 
 void buildAndShow(Player& player) {
-    auto const& config = Zoomidy::getInstance().getConfig();
-    auto        state  = std::make_shared<FormState>(config);
+    auto const& config            = Zoomidy::getInstance().getConfig();
+    auto const [factorMin, factorMax] = factorRange(config);
+
+    auto state = std::make_shared<FormState>();
+    seed(*state, config);
 
     ll::ui::CustomForm form{player, "Zoomidy"};
 
@@ -145,15 +174,15 @@ void buildAndShow(Player& player) {
                 {.label = "Toggle", .value = static_cast<double>(ActivationMode::Toggle), .description = "Each press flips the zoom on or off."},
     }
         )
-        .slider("Magnification", state->factor, config.zoom.minFactor, config.zoom.maxFactor, {.description = "How far in the zoom goes. 4 means 4x.", .step = 0.5})
+        .slider("Magnification", state->factor, factorMin, factorMax, {.description = "How far in the zoom goes. 4 means 4x.", .step = 0.5})
         .divider();
 
     form.header("Animation")
         .slider(
             "Transition (ms)",
             state->durationMillis,
-            0.0,
-            1000.0,
+            kDurationMinMs,
+            kDurationMaxMs,
             {.description = "Time spent easing in, and again easing out. 0 snaps instantly.", .step = 10.0}
         )
         .dropdown(
@@ -187,28 +216,32 @@ void buildAndShow(Player& player) {
         .slider(
             "Multiplier",
             state->sensitivityMultiplier,
-            0.05,
-            3.0,
+            kMultiplierMin,
+            kMultiplierMax,
             {.description = "Relative mode multiplies this on top; Fixed mode uses it on its own.", .step = 0.05}
         )
         .divider();
 
     form.header("Cinematic camera")
         .toggle("Smooth the camera while zoomed", state->cinematicEnabled)
-        .slider("Smoothing", state->cinematicStrength, 0.0, 0.95, {.description = "Higher is heavier. 0 is no smoothing.", .step = 0.05})
+        .slider("Smoothing", state->cinematicStrength, kCinematicMin, kCinematicMax, {.description = "Higher is heavier. 0 is no smoothing.", .step = 0.05})
         .divider();
 
     form.header("Scroll wheel")
         .toggle("Adjust magnification with the wheel", state->scrollToAdjust, {.description = "While zoomed, the wheel changes the magnification instead of the hotbar."})
-        .slider("Wheel step", state->scrollStep, 1.05, 2.0, {.description = "How much one notch multiplies the magnification by.", .step = 0.05})
+        .slider("Wheel step", state->scrollStep, kScrollStepMin, kScrollStepMax, {.description = "How much one notch multiplies the magnification by.", .step = 0.05})
         .toggle("Remember wheel adjustment", state->rememberScrolledFactor, {.description = "Keep the scrolled magnification for the next zoom instead of returning to the slider value."})
         .divider();
 
     form.button("Apply", [state] { apply(*state); })
         .button("Reset to defaults", [state] {
-            Zoomidy::getInstance().applyConfig(Config{});
+            // Re-seeding the controls is what makes the reset stick: the close handler reads
+            // these observables back out, so leaving them on the old values would undo it.
+            Config const defaults{};
+            seed(*state, defaults);
+            Zoomidy::getInstance().applyConfig(defaults);
             ZoomState::getInstance().reset();
-            state->keyStatus.setData("§eReset. Reopen the form to see the defaults.");
+            state->keyStatus.setData("§eSettings reset to their defaults.");
         })
         .closeButton();
 

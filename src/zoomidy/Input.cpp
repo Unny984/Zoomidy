@@ -27,9 +27,13 @@ ll::event::ListenerPtr gMouseListener;
 ll::event::ListenerPtr gTickListener;
 ll::event::ListenerPtr gExitListener;
 
-/// The zoom key is currently physically down. Guards against key auto-repeat flipping a toggle
-/// binding on and off many times a second.
-bool gKeyHeld = false;
+/// The virtual-key code currently held down for the zoom, or 0 when nothing is.
+///
+/// This stores the code rather than a bare flag on purpose. The release has to be matched
+/// against the key that actually went down, not against whatever the binding says *now* -- the
+/// binding can be changed while the key is held, and a release that fails to match would leave
+/// the mod convinced the key is still down and refuse every later press.
+int gHeldKeyCode = 0;
 
 /// Sub-pixel remainder of the sensitivity scaling. The client hands us whole-number mouse
 /// deltas, so a 0.25x scale applied naively would throw away every movement of 1 or 2 counts and
@@ -107,31 +111,31 @@ short filterAxis(short raw, double factor, bool cinematic, double strength, doub
 /// is bound to something vanilla does not use, which is the normal case.
 void onKeyInput(ll::event::KeyInputEvent& ev) {
     auto const& config = Zoomidy::getInstance().getConfig();
-    if (ev.keyCode() != config.zoom.keyCode) {
-        return;
-    }
-
-    auto& zoom = ZoomState::getInstance();
+    auto&       zoom   = ZoomState::getInstance();
 
     if (!ev.isDown()) {
-        // Key-up is handled even outside gameplay, otherwise releasing the key after opening
-        // chat would leave the mod believing it is still held.
-        if (!gKeyHeld) {
+        // Matched against the held code, not the configured one, and handled even outside
+        // gameplay -- releasing the key after opening chat still has to clear the held state.
+        if (gHeldKeyCode == 0 || ev.keyCode() != gHeldKeyCode) {
             return;
         }
-        gKeyHeld = false;
+        gHeldKeyCode = 0;
         if (config.zoom.activation == ActivationMode::Hold) {
             zoom.setActive(false);
         }
         return;
     }
 
-    // Auto-repeat sends a stream of key-downs while the key is held; only the first one counts,
-    // otherwise a toggle binding would flicker on and off many times a second.
-    if (!isInGameplay() || gKeyHeld) {
+    if (ev.keyCode() != config.zoom.keyCode) {
         return;
     }
-    gKeyHeld = true;
+
+    // Auto-repeat sends a stream of key-downs while the key is held; only the first one counts,
+    // otherwise a toggle binding would flicker on and off many times a second.
+    if (gHeldKeyCode != 0 || !isInGameplay()) {
+        return;
+    }
+    gHeldKeyCode = ev.keyCode();
 
     if (config.zoom.activation == ActivationMode::Toggle) {
         zoom.toggleActive();
@@ -153,8 +157,12 @@ void onMouseInput(ll::event::MouseInputEvent& ev) {
 
     if (action == ::MouseAction::ActionWheel) {
         if (config.zoom.scrollToAdjust && zoom.isActive()) {
-            zoom.adjustFactorByScroll(ev.buttonData() > 0 ? 1 : -1);
-            // Swallow the notch so the hotbar selection does not move with it.
+            // buttonData carries the signed notch count. Zero means the event says nothing about
+            // direction, so it must not be read as a scroll-out; the notch is still swallowed so
+            // the hotbar selection does not move while zoomed.
+            if (int const notches = ev.buttonData(); notches != 0) {
+                zoom.adjustFactorByScroll(std::clamp(notches, -5, 5));
+            }
             ev.cancel();
         }
         return;
@@ -177,13 +185,19 @@ void onMouseInput(ll::event::MouseInputEvent& ev) {
 }
 
 void onClientTick(ll::event::ClientLevelTickEvent&) {
+    if (isInGameplay()) {
+        return;
+    }
+
+    // Alt-tabbing or opening a screen can swallow the key-up entirely. Forgetting the held key
+    // in every mode is what keeps that from disabling the zoom key for the rest of the session.
+    gHeldKeyCode = 0;
+
+    // A held zoom is dropped with it. Toggled zoom is deliberately left alone: it survives
+    // menus, like Zoomify's does.
     auto const& config = Zoomidy::getInstance().getConfig();
     auto&       zoom   = ZoomState::getInstance();
-
-    // Opening chat or a container swallows the key-up, so drop a held zoom once the pointer is
-    // released. Toggled zoom is deliberately left alone: it survives menus, like Zoomify's does.
-    if (config.zoom.activation == ActivationMode::Hold && zoom.isActive() && !isInGameplay()) {
-        gKeyHeld = false;
+    if (config.zoom.activation == ActivationMode::Hold && zoom.isActive()) {
         zoom.setActive(false);
     }
 }
@@ -191,7 +205,7 @@ void onClientTick(ll::event::ClientLevelTickEvent&) {
 /// Leaving the world while zoomed would otherwise carry the zoom into the next one, because
 /// nothing else clears the state between sessions.
 void onExitLevel(ll::event::ClientExitLevelEvent&) {
-    gKeyHeld = false;
+    gHeldKeyCode = 0;
     resetFilters();
     ZoomState::getInstance().reset();
 }
@@ -216,7 +230,7 @@ void unregisterInputListeners() {
             listener->reset();
         }
     }
-    gKeyHeld = false;
+    gHeldKeyCode = 0;
     resetFilters();
 }
 

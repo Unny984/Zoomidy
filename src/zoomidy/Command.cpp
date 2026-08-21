@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <string>
 
+#include "magic_enum/magic_enum.hpp"
+
 #include "ll/api/command/CommandHandle.h"
 #include "ll/api/command/CommandRegistrar.h"
 #include "ll/api/command/Optional.h"
@@ -76,11 +78,15 @@ void reportStatus(CommandOutput& output) {
     auto const& c = Zoomidy::getInstance().getConfig();
 
     output.success("§lZoomidy§r");
-    output.success("  key: {}  activation: {}", keynames::format(c.zoom.keyCode), c.zoom.activation == ActivationMode::Hold ? "hold" : "toggle");
+    output.success("  key: {}  activation: {}", keynames::format(c.zoom.keyCode), magic_enum::enum_name(c.zoom.activation));
     output.success("  magnification: {:g}x  (range {:g}-{:g})", c.zoom.factor, c.zoom.minFactor, c.zoom.maxFactor);
-    output.success("  transition: {:g} ms  curve: {}", c.animation.durationSeconds * 1000.0, static_cast<int>(c.animation.curve));
+    output.success(
+        "  transition: {:g} ms  curve: {}",
+        c.animation.durationSeconds * 1000.0,
+        magic_enum::enum_name(c.animation.curve)
+    );
     output.success("  hide hand: {}", c.view.hideHand ? "yes" : "no");
-    output.success("  sensitivity: mode {} x{:g}", static_cast<int>(c.sensitivity.mode), c.sensitivity.multiplier);
+    output.success("  sensitivity: {} x{:g}", magic_enum::enum_name(c.sensitivity.mode), c.sensitivity.multiplier);
     output.success("  cinematic: {} strength {:g}", c.cinematic.enabled ? "on" : "off", c.cinematic.strength);
     output.success("  scroll to adjust: {} step {:g}", c.zoom.scrollToAdjust ? "on" : "off", c.zoom.scrollStep);
     output.success("  config file: {}", Zoomidy::getInstance().getConfigPath().string());
@@ -137,7 +143,7 @@ void buildCommand() {
             auto config            = Zoomidy::getInstance().getConfig();
             config.zoom.activation = param.activation;
             commit(config);
-            output.success("Activation set to {}.", param.activation == ActivationMode::Hold ? "hold" : "toggle");
+            output.success("Activation set to {}.", magic_enum::enum_name(param.activation));
         }
     );
 
@@ -159,7 +165,11 @@ void buildCommand() {
                 config.animation.curve = param.curve.get();
             }
             commit(config);
-            output.success("Transition set to {:g} ms.", config.animation.durationSeconds * 1000.0);
+            output.success(
+                "Transition set to {:g} ms on {}.",
+                config.animation.durationSeconds * 1000.0,
+                magic_enum::enum_name(config.animation.curve)
+            );
         }
     );
 
@@ -180,7 +190,11 @@ void buildCommand() {
                 config.sensitivity.multiplier = std::clamp(static_cast<double>(param.multiplier.get()), 0.05, 3.0);
             }
             commit(config);
-            output.success("Sensitivity mode {} at x{:g}.", static_cast<int>(config.sensitivity.mode), config.sensitivity.multiplier);
+            output.success(
+                "Sensitivity set to {} at x{:g}.",
+                magic_enum::enum_name(config.sensitivity.mode),
+                config.sensitivity.multiplier
+            );
         }
     );
 

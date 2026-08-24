@@ -60,6 +60,26 @@ jobs:
         env:
           XMAKE_PKG_CACHEDIR: ${{ runner.temp }}/xmake-package-cache-${{ github.run_id }}-${{ matrix.levilamina_version }}
 
+      # LeviLamina 26.10.14 pins rapidjson v1.1.0, which predates upstream commit
+      # 3b2441b8 (2016) removing a GenericStringRef::operator= that assigns to a
+      # const member - invalid C++ that newer clang rejects. 26.20.x already
+      # moved to a fixed snapshot; this reproduces that fix for the 26.10 build.
+      - if: matrix.levilamina_version == '26.10'
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Path "$env:LOCALAPPDATA/.xmake/packages/r/rapidjson/v1.1.0" -Recurse -Filter "document.h" -ErrorAction SilentlyContinue
+          if (-not $files) {
+            throw "rapidjson v1.1.0 document.h was not found to patch"
+          }
+          foreach ($f in $files) {
+            $content = Get-Content $f.FullName -Raw
+            $patched = $content -replace 'GenericStringRef& operator=\(const GenericStringRef& rhs\) \{ s = rhs\.s; length = rhs\.length; \}\r?\n', ''
+            if ($patched -eq $content) {
+              throw "rapidjson patch target was not found in $($f.FullName) - upstream file may have changed"
+            }
+            Set-Content -Path $f.FullName -Value $patched -NoNewline
+          }
+
       - run: xmake -v -y
         env:
           XMAKE_PKG_CACHEDIR: ${{ runner.temp }}/xmake-package-cache-${{ github.run_id }}-${{ matrix.levilamina_version }}

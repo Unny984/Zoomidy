@@ -21,20 +21,34 @@ Built as a **client-side [LeviLamina](https://github.com/LiteLDev/LeviLamina) mo
 ## Requirements
 
 - Windows 10/11 x64
-- LeviLamina **26.20.x** installed on the client, via
-  [LeviLauncher](https://lamina.levimc.org/user_guides/install_on_client/)
-- Minecraft Bedrock Edition client **1.26.20.4** — the version LeviLamina 26.20.x supports
+- LeviLamina installed on the client, via
+  [LeviLauncher](https://lamina.levimc.org/user_guides/install_on_client/) — either line below
+- The matching Minecraft Bedrock Edition client version
+
+| LeviLamina | Minecraft client | Zoomidy variant |
+|---|---|---|
+| **26.20.x** | **1.26.20.4** | `client` (default) |
+| **26.10.x** | **1.26.10.4** | `client_26_10` |
 
 > The Store copy of Minecraft is usually newer than whatever LeviLamina supports, and the hooks
 > here are resolved against the exact game binary. Use LeviLauncher to download and switch to the
-> supported client version; it keeps it separate from your Store install.
+> supported client version; it keeps it separate from your Store install. Each Zoomidy variant is
+> built against, and only works with, the matching LeviLamina line — installing the wrong one
+> will fail to load.
 
 ## Install
 
-Drop the built `zoomidy` folder into your client's `mods/` directory, or install with `lip`:
+Drop the built `zoomidy` folder into your client's `mods/` directory, or install with `lip`.
+This installs the LeviLamina **26.20.x** build:
 
 ```bash
 lip install github.com/Unny984/Zoomidy
+```
+
+On LeviLamina **26.10.x**, install the matching variant instead:
+
+```bash
+lip install github.com/Unny984/Zoomidy#client_26_10
 ```
 
 ## Usage
@@ -140,6 +154,14 @@ MSVC). Install LLVM, or add *C++ Clang Compiler for Windows* in the Visual Studi
 
 ```bash
 xmake f -p windows -a x64 -m release -y
+xmake
+```
+
+This builds against LeviLamina **26.20.x** by default. For the **26.10.x** line, pass the
+version explicitly:
+
+```bash
+xmake f -p windows -a x64 -m release --levilamina_version=26.10 -y
 xmake
 ```
 

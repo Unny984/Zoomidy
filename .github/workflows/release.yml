@@ -8,6 +8,13 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          - levilamina_version: "26.20"
+            suffix: ""
+          - levilamina_version: "26.10"
+            suffix: "-26.10"
     steps:
       - uses: actions/checkout@v7
         with:
@@ -19,19 +26,19 @@ jobs:
         with:
           path: |
             ~/AppData/Local/.xmake
-          key: xmake-${{ hashFiles('xmake.lua') }}
+          key: xmake-${{ hashFiles('xmake.lua') }}-${{ matrix.levilamina_version }}
           restore-keys: |
-            xmake-
+            xmake-${{ matrix.levilamina_version }}-
 
       - run: xmake repo -u
 
-      - run: xmake f -a x64 -m release -p windows --target_type=client -y
+      - run: xmake f -a x64 -m release -p windows --target_type=client --levilamina_version=${{ matrix.levilamina_version }} -y
 
       - run: xmake -w -y
 
       - uses: actions/upload-artifact@v7
         with:
-          name: zoomidy-${{ github.sha }}-client-windows-x64
+          name: zoomidy-${{ github.sha }}-client-windows-x64${{ matrix.suffix }}
           path: |
             bin/
 
@@ -51,6 +58,13 @@ jobs:
             ${{ steps.extract-release-notes.outputs.release_notes }}
 
   upload-to-release:
+    strategy:
+      matrix:
+        include:
+          - levilamina_version: "26.20"
+            suffix: ""
+          - levilamina_version: "26.10"
+            suffix: "-26.10"
     needs:
       - build
       - update-release-notes
@@ -62,17 +76,17 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          name: zoomidy-${{ github.sha }}-client-windows-x64
+          name: zoomidy-${{ github.sha }}-client-windows-x64${{ matrix.suffix }}
           path: artifact
 
       - run: cp CHANGELOG.md LICENSE README.md artifact/
 
       # The asset name has to match the urls entry in tooth.json exactly, or lip
       # cannot fetch the release.
-      - run: zip -r ../zoomidy-client-windows-x64.zip *
+      - run: zip -r ../zoomidy-client-windows-x64${{ matrix.suffix }}.zip *
         working-directory: artifact
 
       - uses: softprops/action-gh-release@v3
         with:
           files: |
-            zoomidy-client-windows-x64.zip
+            zoomidy-client-windows-x64${{ matrix.suffix }}.zip

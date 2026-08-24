@@ -10,7 +10,19 @@ option("target_type")
     set_values("client")
 option_end()
 
-add_requires("levilamina", {configs = {target_type = get_config("target_type")}})
+-- The hooks resolve against the exact game binary, so a build only works
+-- against the LeviLamina/Minecraft line it was compiled for. CI builds both.
+option("levilamina_version")
+    set_default("26.20")
+    set_showmenu(true)
+    set_values("26.10", "26.20")
+option_end()
+
+-- get_config() reads nil for a custom option on xmake's early description-scope
+-- passes, before command-line/default values are resolved; guard the
+-- concatenation so those passes don't crash. The later, resolved passes are
+-- what actually stick for the build.
+add_requires("levilamina " .. (get_config("levilamina_version") or "26.20") .. ".x", {configs = {target_type = get_config("target_type")}})
 add_requires("levibuildscript")
 
 if not has_config("vs_runtime") then

@@ -8,6 +8,13 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          - levilamina_version: "26.20"
+            suffix: ""
+          - levilamina_version: "26.10"
+            suffix: "-26.10"
     steps:
       - uses: actions/checkout@v7
         with:
@@ -19,18 +26,18 @@ jobs:
         with:
           path: |
             ~/AppData/Local/.xmake
-          key: xmake-${{ hashFiles('xmake.lua') }}
+          key: xmake-${{ hashFiles('xmake.lua') }}-${{ matrix.levilamina_version }}
           restore-keys: |
-            xmake-
+            xmake-${{ matrix.levilamina_version }}-
 
       - run: xmake repo -u
 
-      - run: xmake f -a x64 -m release -p windows -v --target_type=client -y
+      - run: xmake f -a x64 -m release -p windows -v --target_type=client --levilamina_version=${{ matrix.levilamina_version }} -y
 
       - run: xmake -v -y
 
       - uses: actions/upload-artifact@v7
         with:
-          name: zoomidy-${{ github.sha }}-client-windows-x64
+          name: zoomidy-${{ github.sha }}-client-windows-x64${{ matrix.suffix }}
           path: |
             bin/

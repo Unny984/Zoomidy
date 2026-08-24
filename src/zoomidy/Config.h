@@ -25,6 +25,9 @@ enum class ActivationMode : int {
     Toggle, ///< Each press flips the zoom on or off.
 };
 
+/// Equality is defaulted throughout so a settings change can be recognised as a no-op. The
+/// settings form now applies every control the moment it is touched, and without this a slider
+/// that lands back on the value it started from would still rewrite config.json.
 struct ZoomSettings {
     /// Windows virtual-key code of the zoom key. 0x46 is `F`.
     ///
@@ -49,6 +52,8 @@ struct ZoomSettings {
 
     /// Keep a scroll-wheel adjustment for the next zoom instead of snapping back to `factor`.
     bool rememberScrolledFactor = false;
+
+    bool operator==(ZoomSettings const&) const = default;
 };
 
 struct AnimationSettings {
@@ -56,11 +61,15 @@ struct AnimationSettings {
     double durationSeconds = 0.2;
 
     EasingCurve curve = EasingCurve::EaseOutQuad;
+
+    bool operator==(AnimationSettings const&) const = default;
 };
 
 struct ViewSettings {
     /// Hide the first-person hand and held item while zoomed in.
     bool hideHand = true;
+
+    bool operator==(ViewSettings const&) const = default;
 };
 
 struct SensitivitySettings {
@@ -68,6 +77,8 @@ struct SensitivitySettings {
 
     /// Extra factor applied on top of `mode`. 1.0 leaves the mode's result untouched.
     double multiplier = 1.0;
+
+    bool operator==(SensitivitySettings const&) const = default;
 };
 
 struct CinematicSettings {
@@ -77,6 +88,8 @@ struct CinematicSettings {
     /// How much the camera lags behind the mouse, as a fraction of the half-second maximum.
     /// 0 is no smoothing; 0.6 gives a 300 ms time constant. Clamped to [0, 0.95].
     double strength = 0.6;
+
+    bool operator==(CinematicSettings const&) const = default;
 };
 
 struct Config {
@@ -87,6 +100,8 @@ struct Config {
     ViewSettings        view{};
     SensitivitySettings sensitivity{};
     CinematicSettings   cinematic{};
+
+    bool operator==(Config const&) const = default;
 };
 
 } // namespace zoomidy

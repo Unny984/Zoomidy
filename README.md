@@ -70,14 +70,19 @@ away, and you can always rebind from the config file.
 > is no server half to talk to when you are a guest on somebody else's world. The sub-commands
 > below work everywhere, and so does editing the config file.
 
-On the **26.10** build the form holds the same settings but works a little differently, because
-that version of LeviLamina predates the form API the 26.20 screen is built on:
+**Every change saves itself.** There is no Apply button on either version — touch a control and it
+takes effect and is written to `config.json` straight away.
+
+The **26.10** build holds the same settings but shows them differently, because that version of
+LeviLamina predates the UI API the 26.20 screen is built on. The only screen it has that can report
+anything before it closes is a menu of buttons, so that is what it uses:
 
 | | 26.20 | 26.10 |
 |---|---|---|
-| Saving | **Apply** button, any number of times | **Apply** submits and closes |
-| Reset to defaults | A button on the form | A toggle, honoured on submit |
-| Unrecognised zoom key | Reported on the form | Reported in chat after it closes |
+| Layout | One page of controls | A menu, one screen per setting |
+| Numbers | Sliders | A value with `+` / `-` buttons |
+| Choices | Dropdowns | A short list to pick from |
+| Zoom key | Type it | Pick from the usual candidates, or `/zoomidy key` for the rest |
 
 ### Sub-commands
 
@@ -135,7 +140,7 @@ on and needs no permissions there.
 | Sensitivity | Rewrites `dx`/`dy` on `ll::event::MouseInputEvent`, carrying the sub-count remainder forward so slow aiming survives a 0.25x scale. |
 | Cinematic camera | Banks the movement, then drains it a frame at a time from a `MouseMapper::tick` hook and feeds it back through `Mouse::feed`. |
 | Scroll to adjust | Cancels the wheel event while zoomed, so the hotbar does not move with it. |
-| Settings screen | `ll::ui::CustomForm`, built on the server thread. |
+| Settings screen | `ll::ui::CustomForm` on 26.20, a menu of `ll::form::SimpleForm`s on 26.10. Built on the server thread either way. |
 
 ### Why the camera coast needs its own hook
 

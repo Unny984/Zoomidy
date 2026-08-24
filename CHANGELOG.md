@@ -23,11 +23,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copy wraps the parsed document in an array and then throws on it, leaving the mod on its
   default settings no matter what the file said.
 
-  Everything the mod does is the same on both. The settings form differs, because 26.10 predates
-  the form API the 26.20 screen is built on: on 26.10 it is submitted in one go with an "Apply"
-  button, "Reset to defaults" is a toggle on the form rather than a button, and whether the zoom
-  key was understood is reported in chat instead of on the form itself. The `/zoomidy`
-  sub-commands and the config file are identical on both.
+  Everything the mod does is the same on both. The settings screen looks different, because 26.10
+  predates the UI API the 26.20 screen is built on: see below. The `/zoomidy` sub-commands and the
+  config file are identical on both.
+
+### Changed
+
+- The settings screen saves as you go. There is no Apply button on either version, and nothing to
+  scroll to the bottom for — every control takes effect and is written to disk the moment you
+  change it.
+
+  On **26.10** that meant replacing the page of controls with a menu of buttons, which is the only
+  screen that version can report anything from before it closes. Sliders become a value with
+  `+`/`-` buttons, dropdowns become a short list to pick from, and toggles flip in place. The zoom
+  key is chosen from a list of the usual candidates; anything else is still `/zoomidy key`.
+
+- `/zoomidy debug` now logs every mouse event rather than only the ones that reach the sensitivity
+  filter, and records whether the zoom was engaged. A capture that stays empty now means something
+  — that the mod is not being handed your mouse at all — instead of looking the same as a filter
+  that decided to do nothing.
+
+### Fixed
+
+- On 26.10 the settings form changed nothing at all. Everything was read back under a name and
+  applied on submit, and every one of those reads came back empty, so submitting rewrote the
+  config with exactly the values it had been opened with. Turning off "hide hand" left the hand
+  hidden, and the sensitivity, cinematic and scroll-wheel settings could not be moved off their
+  defaults. The screen no longer submits anything, so there is nothing left to read back.
 
 ## [0.3.1] - 2026-08-21
 

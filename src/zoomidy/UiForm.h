@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -115,6 +116,16 @@ std::string applyValues(Values const& values);
 
 /// Applies a config wholesale. Used by "reset to defaults".
 void applyConfig(Config const& config);
+
+/// Runs `action` on the server thread with the player of the world this client is hosting, or
+/// logs and does nothing if there is not one.
+///
+/// The legacy backend leans on this to re-open a menu after a button was pressed. The button
+/// callback runs while LeviLamina is still handling the response packet for the screen the player
+/// just clicked in, and a form sent from inside that handler can reach the client before it has
+/// finished tearing the old screen down. Going through the queue puts the new form on the next
+/// tick instead, and re-resolves the player rather than holding a reference across it.
+void onServerThread(std::function<void(Player&)> action);
 
 /// Builds and shows the settings form. Exactly one definition is compiled, chosen by which form
 /// API the LeviLamina being built against provides.

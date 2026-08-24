@@ -183,8 +183,9 @@ void buildCommand() {
             int const budget = enableInputDebug(param.enabled);
             if (budget > 0) {
                 output.success(
-                    "Logging the next {} mouse events while zoomed. Hold the zoom key, move the "
-                    "mouse, then read logs/latest.log.",
+                    "Logging the next {} mouse events. Move the mouse, scroll, hold the zoom key, "
+                    "then read logs/latest.log. Nothing logged at all means the mod is not seeing "
+                    "your mouse.",
                     budget
                 );
             } else {

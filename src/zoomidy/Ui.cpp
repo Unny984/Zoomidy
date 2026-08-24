@@ -4,6 +4,7 @@
 #include <cmath>
 #include <format>
 #include <string>
+#include <utility>
 
 #include "ll/api/service/Bedrock.h"
 #include "ll/api/thread/ServerThreadExecutor.h"
@@ -139,16 +140,20 @@ std::string describeUnavailability() {
     return {};
 }
 
-void openSettingsForm() {
-    ll::thread::ServerThreadExecutor::getDefault().execute([] {
+void onServerThread(std::function<void(Player&)> action) {
+    ll::thread::ServerThreadExecutor::getDefault().execute([action = std::move(action)] {
         if (auto* player = findHostedServerPlayer()) {
-            buildAndShow(*player);
+            action(*player);
             return;
         }
         Zoomidy::getInstance().getSelf().getLogger().warn(
             "Could not open the settings form: no player in the hosted world."
         );
     });
+}
+
+void openSettingsForm() {
+    onServerThread([](Player& player) { buildAndShow(player); });
 }
 
 } // namespace zoomidy::ui

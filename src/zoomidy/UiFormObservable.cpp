@@ -1,9 +1,10 @@
 /// The settings form as built against LeviLamina's observable-backed UI API (26.20 and later).
 ///
-/// Controls are bound to observables that stay live for as long as the form is on screen, which
-/// is what lets "Reset to defaults" visibly repopulate the form and lets the key field answer
-/// back. `UiFormLegacy.cpp` covers the SDKs that predate this API; exactly one of the two
-/// compiles to anything.
+/// Controls are bound to observables that stay live for as long as the form is on screen. That is
+/// what lets every control save itself the moment it is touched -- there is no Apply button and
+/// nothing to scroll to the bottom for -- and what lets "Reset to defaults" visibly repopulate the
+/// form and the key field answer back. `UiFormLegacy.cpp` covers the SDKs that predate this API,
+/// where none of that is possible; exactly one of the two compiles to anything.
 #if __has_include("ll/api/ui/form/CustomForm.h")
 
 #include <memory>
@@ -44,6 +45,10 @@ struct FormState {
     ll::ui::ObservableBoolean cinematicEnabled{false, kWritable};
     ll::ui::ObservableNumber  cinematicStrengthPercent{0.0, kWritable};
     ll::ui::ObservableString  keyStatus{std::string{}};
+
+    /// Set while `seed` is writing the controls, so the auto-save subscriptions can tell a value
+    /// the player changed from one the form put there itself.
+    bool seeding{false};
 };
 
 /// Pushes a config into the controls. Used to build the form and again by "Reset to defaults",
@@ -52,6 +57,7 @@ struct FormState {
 void seed(FormState& state, Config const& config) {
     Values const values = toValues(config);
 
+    state.seeding = true;
     state.keyText.setData(values.keyText);
     state.activation.setData(values.activation);
     state.factor.setData(values.factor);
@@ -65,6 +71,7 @@ void seed(FormState& state, Config const& config) {
     state.sensitivityMultiplierPercent.setData(values.sensitivityMultiplierPercent);
     state.cinematicEnabled.setData(values.cinematicEnabled);
     state.cinematicStrengthPercent.setData(values.cinematicStrengthPercent);
+    state.seeding = false;
 }
 
 /// Reads the controls back out into the toolkit-independent shape.
@@ -88,6 +95,39 @@ Values collect(FormState const& state) {
 
 void apply(FormState& state) { state.keyStatus.setData(applyValues(collect(state))); }
 
+/// Makes every control save itself as soon as the player changes it.
+///
+/// The subscription holds a *weak* reference back to the state. The observables are members of
+/// the state, so a strong one would be a cycle: the state would keep the callbacks alive and the
+/// callbacks would keep the state alive, and the form would leak every time it was opened. Held
+/// weakly, everything goes when the last callback the form is holding is destroyed.
+///
+/// `seed` writes the same observables, and a write runs the subscribers, so the guard is what
+/// keeps a reset from saving the config once per control on its way through.
+void autoApply(std::shared_ptr<FormState> const& state) {
+    auto save = [weak = std::weak_ptr<FormState>{state}](auto const&) {
+        auto const held = weak.lock();
+        if (!held || held->seeding) {
+            return;
+        }
+        apply(*held);
+    };
+
+    state->keyText.subscribe(save);
+    state->activation.subscribe(save);
+    state->factor.subscribe(save);
+    state->scrollToAdjust.subscribe(save);
+    state->scrollStepPercent.subscribe(save);
+    state->rememberScrolledFactor.subscribe(save);
+    state->durationMillis.subscribe(save);
+    state->curve.subscribe(save);
+    state->hideHand.subscribe(save);
+    state->sensitivityMode.subscribe(save);
+    state->sensitivityMultiplierPercent.subscribe(save);
+    state->cinematicEnabled.subscribe(save);
+    state->cinematicStrengthPercent.subscribe(save);
+}
+
 /// The shared option tables in the toolkit's own shape.
 std::vector<ll::ui::DropdownItemData> itemsOf(std::span<Option const> options) {
     std::vector<ll::ui::DropdownItemData> items;
@@ -110,6 +150,7 @@ void buildAndShow(Player& player) {
 
     auto state = std::make_shared<FormState>();
     seed(*state, config);
+    autoApply(state);
 
     ll::ui::CustomForm form{player, "Zoomidy"};
 
@@ -183,15 +224,19 @@ void buildAndShow(Player& player) {
         )
         .divider();
 
-    form.button("Apply", [state] { apply(*state); })
-        .button("Reset to defaults", [state] {
-            // Re-seeding the controls is what makes the reset stick: the close handler reads
-            // these observables back out, so leaving them on the old values would undo it.
-            Config const defaults{};
-            seed(*state, defaults);
-            applyConfig(defaults);
-            state->keyStatus.setData("§eSettings reset to their defaults.");
-        })
+    // No Apply button: `autoApply` has already saved everything above by the time the player gets
+    // this far down the form.
+    form.button(
+            "Reset to defaults",
+            [state] {
+                // Re-seeding the controls is what makes the reset stick: the close handler reads
+                // these observables back out, so leaving them on the old values would undo it.
+                Config const defaults{};
+                seed(*state, defaults);
+                applyConfig(defaults);
+                state->keyStatus.setData("§eSettings reset to their defaults.");
+            }
+        )
         .closeButton();
 
     if (auto shown = form.show([state](ll::ui::CustomForm::Result) { apply(*state); }); !shown) {

@@ -1,29 +1,31 @@
-/// The settings form as built against LeviLamina's pre-observable form API, for 26.10 and
-/// earlier. `UiFormObservable.cpp` covers the newer SDKs; exactly one of the two compiles to
-/// anything.
+/// The settings screen for LeviLamina 26.10 and earlier, which predate the observable-backed UI
+/// API that `UiFormObservable.cpp` is built on. Exactly one of the two compiles to anything.
 ///
-/// The older API is a different interaction model rather than a smaller version of the same one:
-/// a form is filled in, submitted once, and read back as a map of results. There is no way to
-/// hang a callback off an in-form button and no way to write to a control after the form has
-/// been sent. Two things follow, and both are deliberate rather than oversights:
+/// It is a menu of buttons rather than a single page of controls, and that is not a stylistic
+/// choice. The only screen on these SDKs that can report anything before it closes is the simple
+/// form, whose buttons each carry their own callback; a custom form is filled in, submitted once,
+/// and read back as a whole. A page of controls therefore cannot save as you go -- it can only
+/// save when you scroll to the bottom and press a submit button, which is the thing this screen
+/// exists to avoid.
 ///
-///   - "Apply" and "Reset to defaults" cannot be buttons. Apply becomes the submit button, and
-///     the reset becomes a toggle that is honoured on submit.
-///   - The key field cannot answer back inside the form, so whether the typed key was understood
-///     is reported to the player in chat once the form closes.
+/// So every button here applies its change immediately, writes it to disk, and re-opens the menu
+/// showing the new value. Nothing is staged, so there is nothing to submit and nothing to lose by
+/// closing the screen.
 #if !__has_include("ll/api/ui/form/CustomForm.h")
 
-#include <cstdint>
+#include <algorithm>
+#include <array>
+#include <format>
 #include <span>
 #include <string>
-#include <variant>
-#include <vector>
+#include <string_view>
 
-#include "ll/api/form/CustomForm.h"
+#include "ll/api/form/SimpleForm.h"
 
 #include "mc/world/actor/player/Player.h"
 
 #include "zoomidy/Config.h"
+#include "zoomidy/KeyNames.h"
 #include "zoomidy/UiForm.h"
 #include "zoomidy/Zoomidy.h"
 
@@ -31,293 +33,393 @@ namespace zoomidy::ui {
 
 namespace {
 
-/// Control names. Only ever used to pair an `append*` call with its entry in the result map, so
-/// they never reach the player.
-constexpr char kKey[]        = "key";
-constexpr char kActivation[] = "activation";
-constexpr char kFactor[]     = "factor";
-constexpr char kDuration[]   = "duration";
-constexpr char kCurve[]      = "curve";
-constexpr char kHideHand[]   = "hideHand";
-constexpr char kSensMode[]   = "sensMode";
-constexpr char kSensMul[]    = "sensMul";
-constexpr char kCineOn[]     = "cineOn";
-constexpr char kCineAmount[] = "cineAmount";
-constexpr char kScrollOn[]   = "scrollOn";
-constexpr char kScrollStep[] = "scrollStep";
-constexpr char kRemember[]   = "remember";
-constexpr char kReset[]      = "reset";
+void showMain(Player& player);
 
-/// The labels of an option table, which is what `appendDropdown` wants.
-std::vector<std::string> labelsOf(std::span<Option const> options) {
-    std::vector<std::string> labels;
-    labels.reserve(options.size());
-    for (auto const& option : options) {
-        labels.emplace_back(option.label);
-    }
-    return labels;
-}
+Config current() { return Zoomidy::getInstance().getConfig(); }
 
-/// The position of a value in an option table, which is what `appendDropdown` wants as its
-/// default. Falls back to the first entry for a config holding an enumerator this build does not
-/// know about.
-size_t indexOfValue(std::span<Option const> options, double value) {
-    for (size_t i = 0; i < options.size(); ++i) {
-        if (options[i].value == value) {
-            return i;
-        }
-    }
-    return 0;
-}
-
-/// Every control's tooltip. The old API has one tooltip per control and no per-option text, so
-/// the option descriptions are folded into the dropdown's own tooltip rather than dropped.
-std::string tooltipOf(std::span<Option const> options) {
-    std::string tooltip;
-    for (auto const& option : options) {
-        if (option.description.empty()) {
-            continue;
-        }
-        if (!tooltip.empty()) {
-            tooltip += '\n';
-        }
-        tooltip += std::string{option.label} + ": " + std::string{option.description};
-    }
-    return tooltip;
-}
-
-/// Reads one entry out of a result map.
+/// Writes a change out and brings the player back to `next`.
 ///
-/// The variant an element parses into is a property of the element, but which alternative a
-/// given SDK picks is not something this file can check at compile time, so every reader accepts
-/// whatever it is handed and converts. Anything missing or unreadable keeps the value the form
-/// was seeded with, which is the existing config -- a control that cannot be read must not be
-/// able to rewrite a setting.
-ll::form::CustomFormElementResult const* find(ll::form::CustomFormResult const& result, std::string const& name) {
-    if (!result) {
-        return nullptr;
-    }
-    auto const it = result->find(name);
-    return it == result->end() ? nullptr : &it->second;
+/// Re-opening goes through `onServerThread` rather than sending the form from here: this runs
+/// inside the handler for the response packet of the screen that was just clicked in, and a form
+/// sent from there can reach the client before it has finished closing the old one.
+void commit(Config const& config, void (*next)(Player&)) {
+    applyConfig(config);
+    onServerThread(next);
 }
 
-double numberOf(ll::form::CustomFormResult const& result, std::string const& name, double fallback) {
-    auto const* entry = find(result, name);
-    if (!entry) {
-        return fallback;
-    }
-    if (auto const* d = std::get_if<double>(entry)) {
-        return *d;
-    }
-    if (auto const* u = std::get_if<uint64>(entry)) {
-        return static_cast<double>(*u);
-    }
-    return fallback;
+std::string onOff(bool on) { return on ? "§aON" : "§8OFF"; }
+
+/// Marks the value a setting currently holds, so a menu of choices says which one is live.
+std::string mark(std::string_view text, bool chosen) {
+    return chosen ? std::format("§a{} §r§7(current)", text) : std::string{text};
 }
 
-bool booleanOf(ll::form::CustomFormResult const& result, std::string const& name, bool fallback) {
-    auto const* entry = find(result, name);
-    if (!entry) {
-        return fallback;
-    }
-    if (auto const* u = std::get_if<uint64>(entry)) {
-        return *u != 0;
-    }
-    if (auto const* d = std::get_if<double>(entry)) {
-        return *d != 0.0;
-    }
-    return fallback;
-}
+// ---------------------------------------------------------------------------------------------
+// Numbers
+// ---------------------------------------------------------------------------------------------
 
-std::string stringOf(ll::form::CustomFormResult const& result, std::string const& name, std::string fallback) {
-    auto const* entry = find(result, name);
-    if (!entry) {
-        return fallback;
-    }
-    if (auto const* s = std::get_if<std::string>(entry)) {
-        return *s;
-    }
-    return fallback;
-}
-
-/// The value a dropdown selected.
+/// A numeric setting, and everything a menu needs to show it and nudge it.
 ///
-/// A dropdown reports itself either by the chosen option's text or by its position, depending on
-/// the SDK, so both are accepted rather than betting on one.
-double optionOf(
-    ll::form::CustomFormResult const& result,
-    std::string const&                name,
-    std::span<Option const>           options,
-    double                            fallback
-) {
-    auto const* entry = find(result, name);
-    if (!entry) {
-        return fallback;
-    }
-    if (auto const* label = std::get_if<std::string>(entry)) {
-        for (auto const& option : options) {
-            if (option.label == *label) {
-                return option.value;
-            }
-        }
-        return fallback;
-    }
-    if (auto const* index = std::get_if<uint64>(entry)) {
-        return *index < options.size() ? options[*index].value : fallback;
-    }
-    if (auto const* index = std::get_if<double>(entry)) {
-        auto const i = static_cast<size_t>(*index);
-        return i < options.size() ? options[i].value : fallback;
-    }
-    return fallback;
+/// The accessors are plain function pointers so that the whole table can be a constant: a stepper
+/// menu re-opens itself after every press, and each re-open has to point back at the same
+/// descriptor without anything having to own it.
+struct Stepper {
+    std::string_view name;
+    std::string_view help;
+    std::string_view unit;
+    double           coarse;
+    double           fine;
+    double (*get)(Config const&);
+    void (*set)(Config&, double);
+    double (*lowest)(Config const&);
+    double (*highest)(Config const&);
+};
+
+constexpr Stepper kMagnification{
+    .name    = "Magnification",
+    .help    = "How far in the zoom goes. 4x means the view is four times closer.",
+    .unit    = "x",
+    .coarse  = 1.0,
+    .fine    = 0.5,
+    .get     = +[](Config const& c) { return c.zoom.factor; },
+    .set     = +[](Config& c, double v) { c.zoom.factor = v; },
+    .lowest  = +[](Config const& c) { return factorRange(c).first; },
+    .highest = +[](Config const& c) { return factorRange(c).second; },
+};
+
+constexpr Stepper kTransition{
+    .name    = "Transition",
+    .help    = "Time spent easing in, and again easing out. 0 snaps instantly.",
+    .unit    = " ms",
+    .coarse  = 100.0,
+    .fine    = kDurationStepMs,
+    .get     = +[](Config const& c) { return c.animation.durationSeconds * 1000.0; },
+    .set     = +[](Config& c, double v) { c.animation.durationSeconds = v / 1000.0; },
+    .lowest  = +[](Config const&) { return kDurationMinMs; },
+    .highest = +[](Config const&) { return kDurationMaxMs; },
+};
+
+constexpr Stepper kMultiplier{
+    .name = "Sensitivity multiplier",
+    .help = "100% leaves the result of the mode alone. Relative multiplies this on top; Fixed "
+            "uses it by itself.",
+    .unit    = "%",
+    .coarse  = 25.0,
+    .fine    = kPercentStep,
+    .get     = +[](Config const& c) { return c.sensitivity.multiplier * 100.0; },
+    .set     = +[](Config& c, double v) { c.sensitivity.multiplier = v / 100.0; },
+    .lowest  = +[](Config const&) { return kMultiplierMinPc; },
+    .highest = +[](Config const&) { return kMultiplierMaxPc; },
+};
+
+constexpr Stepper kSmoothing{
+    .name    = "Cinematic smoothing",
+    .help    = "Higher is heavier. 0% is no smoothing.",
+    .unit    = "%",
+    .coarse  = 25.0,
+    .fine    = kPercentStep,
+    .get     = +[](Config const& c) { return c.cinematic.strength * 100.0; },
+    .set     = +[](Config& c, double v) { c.cinematic.strength = v / 100.0; },
+    .lowest  = +[](Config const&) { return kCinematicMinPc; },
+    .highest = +[](Config const&) { return kCinematicMaxPc; },
+};
+
+constexpr Stepper kWheelStep{
+    .name    = "Wheel step",
+    .help    = "How much one notch multiplies the magnification by. 120% steps by a fifth each time.",
+    .unit    = "%",
+    .coarse  = 20.0,
+    .fine    = kPercentStep,
+    .get     = +[](Config const& c) { return c.zoom.scrollStep * 100.0; },
+    .set     = +[](Config& c, double v) { c.zoom.scrollStep = v / 100.0; },
+    .lowest  = +[](Config const&) { return kScrollStepMinPc; },
+    .highest = +[](Config const&) { return kScrollStepMaxPc; },
+};
+
+std::string valueText(Stepper const& stepper, Config const& config) {
+    return std::format("{:g}{}", stepper.get(config), stepper.unit);
 }
 
-void onSubmit(Player& player, ll::form::CustomFormResult const& result) {
-    // An empty result means the player closed the form rather than submitting it.
-    if (!result) {
-        return;
+void showStepper(Player& player, Stepper const& stepper) {
+    Config const config = current();
+
+    ll::form::SimpleForm form{
+        std::format("{}: {}", stepper.name, valueText(stepper, config)),
+        std::format(
+            "{}\n\n§7Range {:g}{} to {:g}{}.",
+            stepper.help,
+            stepper.lowest(config),
+            stepper.unit,
+            stepper.highest(config),
+            stepper.unit
+        )
+    };
+
+    // Each press re-reads the config rather than working from the copy above: the menu re-opens
+    // after every press, and the value it was built from is one press out of date by the second.
+    auto nudge = [&form, &stepper](std::string const& label, double delta) {
+        form.appendButton(label, [&stepper, delta](Player&) {
+            Config config = current();
+            stepper.set(
+                config,
+                std::clamp(stepper.get(config) + delta, stepper.lowest(config), stepper.highest(config))
+            );
+            applyConfig(config);
+            onServerThread([&stepper](Player& player) { showStepper(player, stepper); });
+        });
+    };
+
+    nudge(std::format("§c-- {:g}{}", stepper.coarse, stepper.unit), -stepper.coarse);
+    nudge(std::format("§c- {:g}{}", stepper.fine, stepper.unit), -stepper.fine);
+    nudge(std::format("§a+ {:g}{}", stepper.fine, stepper.unit), stepper.fine);
+    nudge(std::format("§a++ {:g}{}", stepper.coarse, stepper.unit), stepper.coarse);
+
+    form.appendDivider();
+    form.appendButton("§7Back", [](Player&) { onServerThread(showMain); });
+
+    form.sendTo(player);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Choices
+// ---------------------------------------------------------------------------------------------
+
+/// One of the shared option tables, wired to the setting it drives.
+struct Choice {
+    std::string_view        name;
+    std::span<Option const> options;
+    double (*get)(Config const&);
+    void (*set)(Config&, double);
+};
+
+constexpr Choice kActivationChoice{
+    .name    = "Activation",
+    .options = kActivationOptions,
+    .get     = +[](Config const& c) { return static_cast<double>(c.zoom.activation); },
+    .set     = +[](Config& c, double v) { c.zoom.activation = static_cast<ActivationMode>(static_cast<int>(v)); },
+};
+
+constexpr Choice kCurveChoice{
+    .name    = "Transition curve",
+    .options = kCurveOptions,
+    .get     = +[](Config const& c) { return static_cast<double>(c.animation.curve); },
+    .set     = +[](Config& c, double v) { c.animation.curve = static_cast<EasingCurve>(static_cast<int>(v)); },
+};
+
+constexpr Choice kSensitivityChoice{
+    .name    = "Sensitivity mode",
+    .options = kSensitivityOptions,
+    .get     = +[](Config const& c) { return static_cast<double>(c.sensitivity.mode); },
+    .set     = +[](Config& c, double v) { c.sensitivity.mode = static_cast<SensitivityMode>(static_cast<int>(v)); },
+};
+
+/// The label of whichever option a config currently holds. A config naming an enumerator this
+/// build does not know about falls back to the first entry, which is also what the menu writes
+/// back if the player picks anything.
+std::string_view labelOf(Choice const& choice, Config const& config) {
+    double const value = choice.get(config);
+    for (auto const& option : choice.options) {
+        if (option.value == value) {
+            return option.label;
+        }
+    }
+    return choice.options.front().label;
+}
+
+void showChoice(Player& player, Choice const& choice) {
+    Config const config = current();
+    double const value  = choice.get(config);
+
+    ll::form::SimpleForm form{std::string{choice.name}, "§7Picking an option applies it straight away."};
+
+    for (auto const& option : choice.options) {
+        // A custom form has one tooltip per control and none per option, so the descriptions had
+        // to be crammed into the tooltip of the dropdown itself. A button can carry its own.
+        std::string text = mark(option.label, option.value == value);
+        if (!option.description.empty()) {
+            text += std::format("\n§7{}", option.description);
+        }
+        double const picked = option.value;
+        form.appendButton(text, [&choice, picked](Player&) {
+            Config config = current();
+            choice.set(config, picked);
+            commit(config, showMain);
+        });
     }
 
-    if (booleanOf(result, kReset, false)) {
-        Config const defaults{};
-        applyConfig(defaults);
-        player.sendMessage("§eZoomidy settings reset to their defaults.");
-        return;
+    form.appendDivider();
+    form.appendButton("§7Back", [](Player&) { onServerThread(showMain); });
+
+    form.sendTo(player);
+}
+
+// ---------------------------------------------------------------------------------------------
+// The zoom key
+// ---------------------------------------------------------------------------------------------
+
+// Enough keys to cover the sensible bindings without turning into a keyboard. Anything else is
+// still reachable through `/zoomidy key`, which takes a name or a raw code: a menu of buttons has
+// no way to offer a text field, and no screen on this SDK can read one back before it closes.
+constexpr std::array kLetterKeys{'B', 'C', 'F', 'G', 'H', 'J', 'K', 'L', 'M', 'N', 'Q', 'R', 'T', 'V', 'X', 'Y', 'Z'};
+
+constexpr std::array kOtherKeys{
+    0x20, // SPACE
+    0x09, // TAB
+    0x14, // CAPSLOCK
+    0xA0, // LSHIFT
+    0xA2, // LCTRL
+    0x12, // ALT
+    0x2D, // INSERT
+    0x24, // HOME
+    0x21, // PAGEUP
+    0x22, // PAGEDOWN
+    0x70, // F1
+    0x71, // F2
+    0x72, // F3
+    0x73, // F4
+    0x74, // F5
+    0x75, // F6
+    0x76, // F7
+    0x77, // F8
+};
+
+void showKeys(Player& player) {
+    Config const config = current();
+
+    ll::form::SimpleForm form{
+        "Zoom key",
+        std::format(
+            "§7Currently §f{}§7.\n§7Any other key: §f/zoomidy key <name or 0x code>"
+            "§7.\n§7Pick one Minecraft does not already use -- the key is watched, not taken over.",
+            keynames::format(config.zoom.keyCode)
+        )
+    };
+
+    auto append = [&form, &config](int code) {
+        form.appendButton(mark(keynames::format(code), code == config.zoom.keyCode), [code](Player&) {
+            Config config       = current();
+            config.zoom.keyCode = code;
+            commit(config, showMain);
+        });
+    };
+
+    form.appendHeader("Letters");
+    for (char const key : kLetterKeys) {
+        append(key);
     }
 
-    Values const seeded = toValues(Zoomidy::getInstance().getConfig());
+    form.appendDivider();
+    form.appendHeader("Other keys");
+    for (int const key : kOtherKeys) {
+        append(key);
+    }
 
-    Values values;
-    values.keyText                = stringOf(result, kKey, seeded.keyText);
-    values.activation             = optionOf(result, kActivation, kActivationOptions, seeded.activation);
-    values.factor                 = numberOf(result, kFactor, seeded.factor);
-    values.scrollToAdjust         = booleanOf(result, kScrollOn, seeded.scrollToAdjust);
-    values.scrollStepPercent      = numberOf(result, kScrollStep, seeded.scrollStepPercent);
-    values.rememberScrolledFactor = booleanOf(result, kRemember, seeded.rememberScrolledFactor);
-    values.durationMillis         = numberOf(result, kDuration, seeded.durationMillis);
-    values.curve                  = optionOf(result, kCurve, kCurveOptions, seeded.curve);
-    values.hideHand               = booleanOf(result, kHideHand, seeded.hideHand);
-    values.sensitivityMode        = optionOf(result, kSensMode, kSensitivityOptions, seeded.sensitivityMode);
-    values.sensitivityMultiplierPercent = numberOf(result, kSensMul, seeded.sensitivityMultiplierPercent);
-    values.cinematicEnabled             = booleanOf(result, kCineOn, seeded.cinematicEnabled);
-    values.cinematicStrengthPercent     = numberOf(result, kCineAmount, seeded.cinematicStrengthPercent);
+    form.appendDivider();
+    form.appendButton("§7Back", [](Player&) { onServerThread(showMain); });
 
-    // Stands in for the live label the newer API can offer: it is the only way to say whether
-    // what was typed into the key field was understood.
-    player.sendMessage(applyValues(values));
+    form.sendTo(player);
+}
+
+// ---------------------------------------------------------------------------------------------
+// The menu itself
+// ---------------------------------------------------------------------------------------------
+
+void showReset(Player& player) {
+    ll::form::SimpleForm form{
+        "Reset Zoomidy",
+        "§7This puts every setting back to the value it shipped with, including the zoom key."
+    };
+
+    form.appendButton("§cYes, reset everything", [](Player&) { commit(Config{}, showMain); });
+    form.appendButton("§7No, go back", [](Player&) { onServerThread(showMain); });
+
+    form.sendTo(player);
+}
+
+void showMain(Player& player) {
+    Config const config = current();
+
+    ll::form::SimpleForm form{"Zoomidy", "§7Every change is applied and saved the moment you make it."};
+
+    auto toggle = [&form, &config](std::string_view label, bool (*get)(Config const&), void (*set)(Config&, bool)) {
+        form.appendButton(std::format("{}: {}", label, onOff(get(config))), [get, set](Player&) {
+            Config config = current();
+            set(config, !get(config));
+            commit(config, showMain);
+        });
+    };
+
+    auto choice = [&form, &config](Choice const& target) {
+        form.appendButton(
+            std::format("{}: §b{}", target.name, labelOf(target, config)),
+            [&target](Player&) { onServerThread([&target](Player& player) { showChoice(player, target); }); }
+        );
+    };
+
+    auto stepper = [&form, &config](Stepper const& target) {
+        form.appendButton(
+            std::format("{}: §b{}", target.name, valueText(target, config)),
+            [&target](Player&) { onServerThread([&target](Player& player) { showStepper(player, target); }); }
+        );
+    };
+
+    form.appendHeader("Zoom");
+    form.appendButton(std::format("Zoom key: §b{}", keynames::format(config.zoom.keyCode)), [](Player&) {
+        onServerThread(showKeys);
+    });
+    choice(kActivationChoice);
+    stepper(kMagnification);
+    form.appendDivider();
+
+    form.appendHeader("Animation");
+    stepper(kTransition);
+    choice(kCurveChoice);
+    form.appendDivider();
+
+    form.appendHeader("View");
+    toggle(
+        "Hide hand while zoomed",
+        +[](Config const& c) { return c.view.hideHand; },
+        +[](Config& c, bool v) { c.view.hideHand = v; }
+    );
+    form.appendDivider();
+
+    form.appendHeader("Sensitivity");
+    choice(kSensitivityChoice);
+    stepper(kMultiplier);
+    form.appendDivider();
+
+    form.appendHeader("Cinematic camera");
+    toggle(
+        "Smooth the camera while zoomed",
+        +[](Config const& c) { return c.cinematic.enabled; },
+        +[](Config& c, bool v) { c.cinematic.enabled = v; }
+    );
+    stepper(kSmoothing);
+    form.appendDivider();
+
+    form.appendHeader("Scroll wheel");
+    toggle(
+        "Adjust magnification with the wheel",
+        +[](Config const& c) { return c.zoom.scrollToAdjust; },
+        +[](Config& c, bool v) { c.zoom.scrollToAdjust = v; }
+    );
+    stepper(kWheelStep);
+    toggle(
+        "Remember wheel adjustment",
+        +[](Config const& c) { return c.zoom.rememberScrolledFactor; },
+        +[](Config& c, bool v) { c.zoom.rememberScrolledFactor = v; }
+    );
+    form.appendDivider();
+
+    form.appendButton("§cReset everything to defaults", [](Player&) { onServerThread(showReset); });
+
+    form.sendTo(player);
 }
 
 } // namespace
 
-void buildAndShow(Player& player) {
-    auto const& config                = Zoomidy::getInstance().getConfig();
-    auto const [factorMin, factorMax] = factorRange(config);
-    Values const values               = toValues(config);
-
-    ll::form::CustomForm form;
-    form.setTitle("Zoomidy");
-
-    form.appendHeader("Zoom")
-        .appendInput(kKey, "Zoom key", "F", values.keyText, std::string{kKeyDescription})
-        .appendDropdown(
-            kActivation,
-            "Activation",
-            labelsOf(kActivationOptions),
-            indexOfValue(kActivationOptions, values.activation),
-            tooltipOf(kActivationOptions)
-        )
-        .appendSlider(kFactor, "Magnification", factorMin, factorMax, 0.5, values.factor, std::string{kFactorDescription})
-        .appendDivider();
-
-    form.appendHeader("Animation")
-        .appendSlider(
-            kDuration,
-            "Transition (ms)",
-            kDurationMinMs,
-            kDurationMaxMs,
-            kDurationStepMs,
-            values.durationMillis,
-            std::string{kDurationDescription}
-        )
-        .appendDropdown(kCurve, "Curve", labelsOf(kCurveOptions), indexOfValue(kCurveOptions, values.curve))
-        .appendDivider();
-
-    form.appendHeader("View")
-        .appendToggle(kHideHand, "Hide hand while zoomed", values.hideHand, std::string{kHideHandDescription})
-        .appendDivider();
-
-    form.appendHeader("Sensitivity")
-        .appendDropdown(
-            kSensMode,
-            "Mode",
-            labelsOf(kSensitivityOptions),
-            indexOfValue(kSensitivityOptions, values.sensitivityMode),
-            tooltipOf(kSensitivityOptions)
-        )
-        .appendSlider(
-            kSensMul,
-            "Multiplier (%)",
-            kMultiplierMinPc,
-            kMultiplierMaxPc,
-            kPercentStep,
-            values.sensitivityMultiplierPercent,
-            std::string{kMultiplierDescription}
-        )
-        .appendDivider();
-
-    form.appendHeader("Cinematic camera")
-        .appendToggle(kCineOn, "Smooth the camera while zoomed", values.cinematicEnabled)
-        .appendSlider(
-            kCineAmount,
-            "Smoothing (%)",
-            kCinematicMinPc,
-            kCinematicMaxPc,
-            kPercentStep,
-            values.cinematicStrengthPercent,
-            std::string{kCinematicDescription}
-        )
-        .appendDivider();
-
-    form.appendHeader("Scroll wheel")
-        .appendToggle(
-            kScrollOn,
-            "Adjust magnification with the wheel",
-            values.scrollToAdjust,
-            std::string{kScrollAdjustDescription}
-        )
-        .appendSlider(
-            kScrollStep,
-            "Wheel step (%)",
-            kScrollStepMinPc,
-            kScrollStepMaxPc,
-            kPercentStep,
-            values.scrollStepPercent,
-            std::string{kScrollStepDescription}
-        )
-        .appendToggle(
-            kRemember,
-            "Remember wheel adjustment",
-            values.rememberScrolledFactor,
-            std::string{kRememberDescription}
-        )
-        .appendDivider();
-
-    // Stands in for the newer API's "Reset to defaults" button. Everything above is ignored when
-    // this is on, which the tooltip has to say because the form cannot grey the controls out.
-    form.appendHeader("Reset")
-        .appendToggle(
-            kReset,
-            "Reset everything to defaults",
-            false,
-            "Applies the default settings and ignores everything else on this screen."
-        );
-
-    form.setSubmitButton("Apply");
-
-    form.sendTo(player, [](Player& submitter, ll::form::CustomFormResult const& result, ll::form::FormCancelReason) {
-        onSubmit(submitter, result);
-    });
-}
+void buildAndShow(Player& player) { showMain(player); }
 
 } // namespace zoomidy::ui
 

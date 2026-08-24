@@ -99,6 +99,13 @@ bool Zoomidy::saveConfig() const {
 }
 
 void Zoomidy::applyConfig(Config const& config) {
+    // The settings form applies every control the moment it is touched, so this is called far
+    // more often than it used to be -- once per notch of a slider, and again when the form
+    // closes. Writing the file only when something actually changed keeps that from turning a
+    // drag across a slider into a burst of identical disk writes.
+    if (mConfig == config) {
+        return;
+    }
     mConfig = config;
     saveConfig();
 }

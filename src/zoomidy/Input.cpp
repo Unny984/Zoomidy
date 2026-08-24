@@ -138,7 +138,7 @@ void onKeyInput(ll::event::KeyInputEvent& ev) {
     }
 }
 
-void onMouseInput(ll::event::MouseInputEvent& ev) {
+void filterMouseInput(ll::event::MouseInputEvent& ev) {
     // The drift's own synthetic events come back through this listener. Filtering them again
     // would scale the sensitivity twice and feed the result straight back into the pool.
     if (drift::isInjecting()) {
@@ -200,24 +200,51 @@ void onMouseInput(ll::event::MouseInputEvent& ev) {
         ev.dx() = filterAxis(rawDx, factor, gResidualX);
         ev.dy() = filterAxis(rawDy, factor, gResidualY);
     }
+}
 
-    if (gDebugEventsLeft > 0) {
-        --gDebugEventsLeft;
-        Zoomidy::getInstance().getSelf().getLogger().info(
-            "mouse action={} in=({},{}) out=({},{}) factor={:.3f} divisor={:.3f} cine={} drifting={}",
-            action,
-            rawDx,
-            rawDy,
-            ev.dx(),
-            ev.dy(),
-            factor,
-            zoom.currentDivisor(),
-            cinematic,
-            drift::isDraining()
-        );
-        if (gDebugEventsLeft == 0) {
-            Zoomidy::getInstance().getSelf().getLogger().info("mouse debug capture finished.");
-        }
+/// Runs the filter, and logs what went in and what came out while a capture is armed.
+///
+/// The logging deliberately wraps the filter rather than sitting inside it. Every interesting way
+/// this can go wrong is a way the filter returns early -- no zoom engaged, an action id that is
+/// not what was expected, a delta of zero -- and a log line written past all of those can only
+/// ever report the cases that already work. Wrapped, a capture that stays empty says the listener
+/// is not being called at all, which is a different problem with a different fix.
+void onMouseInput(ll::event::MouseInputEvent& ev) {
+    if (gDebugEventsLeft <= 0) {
+        filterMouseInput(ev);
+        return;
+    }
+
+    int const   action    = ev.actionButtonId();
+    int const   data      = ev.buttonData();
+    short const rawDx     = ev.dx();
+    short const rawDy     = ev.dy();
+    bool const  injecting = drift::isInjecting();
+
+    filterMouseInput(ev);
+
+    auto const& zoom = ZoomState::getInstance();
+
+    --gDebugEventsLeft;
+    Zoomidy::getInstance().getSelf().getLogger().info(
+        "mouse action={} data={} in=({},{}) out=({},{}) engaged={} active={} factor={:.3f} "
+        "divisor={:.3f} cine={} injecting={} drifting={}",
+        action,
+        data,
+        rawDx,
+        rawDy,
+        ev.dx(),
+        ev.dy(),
+        zoom.isEngaged(),
+        zoom.isActive(),
+        sensitivityFactor(),
+        zoom.currentDivisor(),
+        Zoomidy::getInstance().getConfig().cinematic.enabled,
+        injecting,
+        drift::isDraining()
+    );
+    if (gDebugEventsLeft == 0) {
+        Zoomidy::getInstance().getSelf().getLogger().info("mouse debug capture finished.");
     }
 }
 

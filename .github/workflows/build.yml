@@ -25,8 +25,11 @@ jobs:
 
       - uses: actions/cache@v6
         with:
+          # Only the resolved packages, never .xmake/cache (build scratch dirs) -
+          # some package recipes (e.g. libcurl) reuse a fixed, non-hashed build
+          # directory, so caching it can leak a stale build across versions/runs.
           path: |
-            ~/AppData/Local/.xmake
+            ~/AppData/Local/.xmake/packages
           key: xmake-${{ hashFiles('xmake.lua') }}-${{ matrix.levilamina_version }}
           restore-keys: |
             xmake-${{ matrix.levilamina_version }}-

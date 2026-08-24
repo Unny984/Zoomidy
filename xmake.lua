@@ -49,7 +49,18 @@ target("zoomidy")
             "-Wno-pragma-system-header-outside-header",
             {tools = {"clang_cl"}}
         )
-        set_toolchains("clang-cl")
+        -- A mod has to be built with the same compiler as the LeviLamina it targets, and the two
+        -- lines do not agree: 26.20 is built with clang, 26.10 with MSVC.
+        --
+        -- Event ids are a hash of a type name that the compiler itself produces, and the event
+        -- classes sit in an *inline* namespace (`ll::event::inline input`). MSVC's __FUNCSIG__
+        -- spells that out -- `ll::event::input::KeyInputEvent` -- while clang's
+        -- __PRETTY_FUNCTION__ elides it to `ll::event::KeyInputEvent`. Mixing the two hashes a
+        -- different string, so listeners register under an id nothing ever emits and the mod
+        -- goes quiet: no command, no key, no error to say why.
+        if (get_config("levilamina_version") or "26.20") == "26.20" then
+            set_toolchains("clang-cl")
+        end
     end
     add_packages("levilamina")
     set_kind("shared")

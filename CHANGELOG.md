@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   game binary. Install it with `lip install github.com/Unny984/Zoomidy#client_26_10`; the plain
   package name still installs the 26.20.x build.
 
+  The 26.10 build is compiled with MSVC rather than clang. LeviLamina derives its event ids from
+  a type name the compiler produces, and the event classes sit in an inline namespace that the
+  two compilers spell differently, so a mod built with the wrong one loads, reports nothing, and
+  then ignores every key press and command. 26.20 is built with clang and 26.10 with MSVC.
+
+  Config files are also read directly rather than through `ll::config::loadConfig`, whose 26.10
+  copy wraps the parsed document in an array and then throws on it, leaving the mod on its
+  default settings no matter what the file said.
+
   Everything the mod does is the same on both. The settings form differs, because 26.10 predates
   the form API the 26.20 screen is built on: on 26.10 it is submitted in one go with an "Apply"
   button, "Reset to defaults" is a toggle on the form rather than a button, and whether the zoom

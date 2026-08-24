@@ -158,8 +158,9 @@ still exactly 1x and the configured magnification.
 
 ## Building
 
-Needs [xmake](https://xmake.io) and the **clang-cl** toolchain (LeviLamina does not build with
-MSVC). Install LLVM, or add *C++ Clang Compiler for Windows* in the Visual Studio Installer.
+Needs [xmake](https://xmake.io), plus **both** Windows toolchains — clang-cl for the 26.20 build
+and MSVC for the 26.10 one. For clang-cl, install LLVM or add *C++ Clang Compiler for Windows*
+in the Visual Studio Installer.
 
 ```bash
 xmake f -p windows -a x64 -m release -y
@@ -175,6 +176,12 @@ xmake
 ```
 
 The packed mod ends up in `bin/`.
+
+> **The compiler is not a free choice.** `xmake.lua` picks it from the target version, and it has
+> to: LeviLamina's event ids are a hash of a type name the *compiler* produces, and the event
+> classes live in an inline namespace that MSVC and clang spell differently. 26.20 is built with
+> clang and 26.10 with MSVC, so a mod compiled with the other one registers its listeners under
+> ids that nothing ever emits — it loads, reports no error, and then quietly does nothing.
 
 ## License
 

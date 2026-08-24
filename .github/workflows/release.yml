@@ -9,6 +9,7 @@ jobs:
   build:
     runs-on: windows-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
           - levilamina_version: "26.20"
@@ -59,6 +60,7 @@ jobs:
 
   upload-to-release:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - levilamina_version: "26.20"

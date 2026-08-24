@@ -23,22 +23,46 @@ jobs:
 
       - uses: xmake-io/github-action-setup-xmake@v1
 
+      # Forces every package (zlib, libssh2, ...) to build from source instead
+      # of mixing in precompiled artifacts pinned to a different sub-dependency
+      # version - that mix is what produces a stale/mismatched link reference.
+      - run: xmake global --policies=package.precompiled:n
+
+      - run: xmake repo -u
+        env:
+          XMAKE_PKG_CACHEDIR: ${{ runner.temp }}/xmake-package-cache-${{ github.run_id }}-${{ matrix.levilamina_version }}
+
+      - id: package-repositories
+        shell: pwsh
+        run: |
+          $revisions = Get-ChildItem "$env:LOCALAPPDATA/.xmake/repositories" -Directory |
+            Sort-Object Name |
+            ForEach-Object {
+              $revision = git -C $_.FullName rev-parse HEAD
+              if ($LASTEXITCODE -ne 0) {
+                throw "Unable to resolve $($_.Name) repository revision"
+              }
+              "$($_.Name)-$revision"
+            }
+          if (-not $revisions) {
+            throw "No xmake package repositories were found"
+          }
+          "revisions=$($revisions -join '-')" >> $env:GITHUB_OUTPUT
+
       - uses: actions/cache@v6
         with:
           # Only the resolved packages, never .xmake/cache (build scratch dirs) -
-          # some package recipes (e.g. libcurl) reuse a fixed, non-hashed build
-          # directory, so caching it can leak a stale build across versions/runs.
-          path: |
-            ~/AppData/Local/.xmake/packages
-          key: xmake-${{ hashFiles('xmake.lua') }}-${{ matrix.levilamina_version }}
-          restore-keys: |
-            xmake-${{ matrix.levilamina_version }}-
-
-      - run: xmake repo -u
+          # those live under XMAKE_PKG_CACHEDIR instead, outside this path.
+          path: ~/AppData/Local/.xmake/packages
+          key: xmake-packages-source-${{ runner.os }}-${{ matrix.levilamina_version }}-${{ steps.package-repositories.outputs.revisions }}-${{ hashFiles('xmake.lua') }}
 
       - run: xmake f -a x64 -m release -p windows -v --target_type=client --levilamina_version=${{ matrix.levilamina_version }} -y
+        env:
+          XMAKE_PKG_CACHEDIR: ${{ runner.temp }}/xmake-package-cache-${{ github.run_id }}-${{ matrix.levilamina_version }}
 
       - run: xmake -v -y
+        env:
+          XMAKE_PKG_CACHEDIR: ${{ runner.temp }}/xmake-package-cache-${{ github.run_id }}-${{ matrix.levilamina_version }}
 
       - uses: actions/upload-artifact@v7
         with:

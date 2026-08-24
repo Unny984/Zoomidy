@@ -14,6 +14,7 @@
 #include "mc/deps/input/InputEventQueue.h"
 #include "mc/deps/input/Mouse.h"
 #include "mc/deps/input/MouseAction.h"
+#include "mc/deps/input/MouseDevice.h"
 #include "mc/deps/input/MouseMapper.h"
 
 #include "zoomidy/Input.h"
@@ -57,6 +58,32 @@ constexpr double kSettled = 0.25;
 /// The longest frame the drain will account for. A hitch would otherwise release most of what is
 /// owed in a single frame, which is exactly the jump this whole mechanism exists to avoid.
 constexpr double kMaxFrameSeconds = 0.1;
+
+/// Pushes one movement event into the mouse device.
+///
+/// 26.20 offers the static conveniences `Mouse::feed`/`getX`/`getY`; on 26.10 `Mouse` carries
+/// nothing but `_instance()`. The `MouseDevice` behind it is identical across both -- same
+/// layout, same seven-argument `feed` -- so the device is the portable route. This is written as
+/// a capability check rather than a version check so that an SDK which restores the wrappers
+/// needs no change here.
+///
+/// `MouseT` is a template parameter only so that the branch not taken is never instantiated;
+/// naming `::Mouse::feed` inside a discarded `if constexpr` of a plain function is still an error
+/// where that member does not exist.
+template <class MouseT = ::Mouse>
+void feedMove(short dx, short dy) {
+    if constexpr (requires {
+                      MouseT::feed(::MouseAction::ActionMove, 0, MouseT::getX(), MouseT::getY(), dx, dy);
+                  }) {
+        MouseT::feed(::MouseAction::ActionMove, 0, MouseT::getX(), MouseT::getY(), dx, dy);
+    } else {
+        auto& device = MouseT::_instance();
+        // The trailing argument is `forceMotionlessPointer`. False matches the wrapper above:
+        // `feedRelative` is the variant that forces it, and the pointer is already being held
+        // still here by passing its current position through unchanged.
+        device.feed(::MouseAction::ActionMove, 0, device._x, device._y, dx, dy, false);
+    }
+}
 
 short quantise(double value, double& residual) {
     double const carried = value + residual;
@@ -126,7 +153,7 @@ void drainOneFrame() {
     // Shaped like the events the client sends for a pointer-locked camera, confirmed by capture:
     // action 0 with the pointer position held still and the movement carried in the delta.
     gInjecting = true;
-    ::Mouse::feed(::MouseAction::ActionMove, 0, ::Mouse::getX(), ::Mouse::getY(), dx, dy);
+    feedMove(dx, dy);
     gInjecting = false;
 }
 

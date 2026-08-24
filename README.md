@@ -70,6 +70,15 @@ away, and you can always rebind from the config file.
 > is no server half to talk to when you are a guest on somebody else's world. The sub-commands
 > below work everywhere, and so does editing the config file.
 
+On the **26.10** build the form holds the same settings but works a little differently, because
+that version of LeviLamina predates the form API the 26.20 screen is built on:
+
+| | 26.20 | 26.10 |
+|---|---|---|
+| Saving | **Apply** button, any number of times | **Apply** submits and closes |
+| Reset to defaults | A button on the form | A toggle, honoured on submit |
+| Unrecognised zoom key | Reported on the form | Reported in chat after it closes |
+
 ### Sub-commands
 
 These work in every world, including remote servers, because they never touch the form system.

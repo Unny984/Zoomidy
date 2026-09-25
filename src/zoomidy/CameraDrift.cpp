@@ -61,11 +61,11 @@ constexpr double kMaxFrameSeconds = 0.1;
 
 /// Pushes one movement event into the mouse device.
 ///
-/// 26.20 offers the static conveniences `Mouse::feed`/`getX`/`getY`; on 26.10 `Mouse` carries
-/// nothing but `_instance()`. The `MouseDevice` behind it is identical across both -- same
-/// layout, same seven-argument `feed` -- so the device is the portable route. This is written as
-/// a capability check rather than a version check so that an SDK which restores the wrappers
-/// needs no change here.
+/// 26.20 offers the static conveniences `Mouse::feed`/`getX`/`getY`; on 26.10 and 26.51 `Mouse`
+/// carries nothing but `_instance()`. The `MouseDevice` behind it is identical across all three
+/// -- same layout, same seven-argument `feed` -- so the device is the portable route. This is
+/// written as a capability check rather than a version check so that an SDK which restores the
+/// wrappers needs no change here.
 ///
 /// `MouseT` is a template parameter only so that the branch not taken is never instantiated;
 /// naming `::Mouse::feed` inside a discarded `if constexpr` of a plain function is still an error

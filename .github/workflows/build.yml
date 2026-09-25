@@ -16,6 +16,8 @@ jobs:
             suffix: ""
           - levilamina_version: "26.10"
             suffix: "-26.10"
+          - levilamina_version: "26.51"
+            suffix: "-26.51"
     steps:
       - uses: actions/checkout@v7
         with:

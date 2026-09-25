@@ -37,6 +37,26 @@ LL_TYPE_INSTANCE_HOOK(
 /// Skipping the original call drops the whole first-person arm, held item and offhand item for
 /// the frame. The hand is a screen-space overlay rather than part of the world, so a zoomed
 /// camera would otherwise leave it filling a quarter of the view at its normal size.
+///
+/// 26.51 passes the previous frame's projection in as well. A hook has to spell out the exact
+/// signature it replaces, so the two shapes cannot share one definition.
+#if ZOOMIDY_LEVILAMINA_LINE >= 2651
+LL_TYPE_INSTANCE_HOOK(
+    ZoomidyHandHook,
+    ll::memory::HookPriority::Normal,
+    ItemInHandRenderer,
+    &ItemInHandRenderer::renderFirstPerson,
+    void,
+    ::BaseActorRenderContext& renderContext,
+    ::Matrix const&           prevProj,
+    ::ItemContextFlags        itemFlags
+) {
+    if (Zoomidy::getInstance().getConfig().view.hideHand && ZoomState::getInstance().isEngaged()) {
+        return;
+    }
+    origin(renderContext, prevProj, itemFlags);
+}
+#else
 LL_TYPE_INSTANCE_HOOK(
     ZoomidyHandHook,
     ll::memory::HookPriority::Normal,
@@ -51,6 +71,7 @@ LL_TYPE_INSTANCE_HOOK(
     }
     origin(renderContext, itemFlags);
 }
+#endif
 
 void registerHooks() {
     ll::memory::HookRegistrar<ZoomidyFovHook, ZoomidyHandHook>::hook();

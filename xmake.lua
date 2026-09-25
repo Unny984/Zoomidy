@@ -11,11 +11,11 @@ option("target_type")
 option_end()
 
 -- The hooks resolve against the exact game binary, so a build only works
--- against the LeviLamina/Minecraft line it was compiled for. CI builds both.
+-- against the LeviLamina/Minecraft line it was compiled for. CI builds every one.
 option("levilamina_version")
     set_default("26.20")
     set_showmenu(true)
-    set_values("26.10", "26.20")
+    set_values("26.10", "26.20", "26.51")
 option_end()
 
 -- get_config() reads nil for a custom option on xmake's early description-scope
@@ -50,7 +50,7 @@ target("zoomidy")
             {tools = {"clang_cl"}}
         )
         -- A mod has to be built with the same compiler as the LeviLamina it targets, and the two
-        -- lines do not agree: 26.20 is built with clang, 26.10 with MSVC.
+        -- lines do not agree: 26.20 and 26.51 are built with clang, 26.10 with MSVC.
         --
         -- Event ids are a hash of a type name that the compiler itself produces, and the event
         -- classes sit in an *inline* namespace (`ll::event::inline input`). MSVC's __FUNCSIG__
@@ -58,10 +58,14 @@ target("zoomidy")
         -- __PRETTY_FUNCTION__ elides it to `ll::event::KeyInputEvent`. Mixing the two hashes a
         -- different string, so listeners register under an id nothing ever emits and the mod
         -- goes quiet: no command, no key, no error to say why.
-        if (get_config("levilamina_version") or "26.20") == "26.20" then
+        if (get_config("levilamina_version") or "26.20") ~= "26.10" then
             set_toolchains("clang-cl")
         end
     end
+    -- The line as a number (26.51 -> 2651), for the few places where the game's own signatures
+    -- differ between lines and a header check cannot tell them apart.
+    local levilamina_major, levilamina_minor = (get_config("levilamina_version") or "26.20"):match("^(%d+)%.(%d+)$")
+    add_defines("ZOOMIDY_LEVILAMINA_LINE=" .. (tonumber(levilamina_major) * 100 + tonumber(levilamina_minor)))
     add_packages("levilamina")
     set_kind("shared")
     set_languages("c++20")

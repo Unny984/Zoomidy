@@ -84,6 +84,11 @@ jobs:
           }
           foreach ($f in $files) {
             $content = Get-Content $f.FullName -Raw
+            # The package cache can hand back a copy this step already patched.
+            if ($content -notmatch 'GenericStringRef& operator=') {
+              Write-Host "rapidjson already patched in $($f.FullName)"
+              continue
+            }
             $patched = $content -replace 'GenericStringRef& operator=\(const GenericStringRef& rhs\) \{ s = rhs\.s; length = rhs\.length; \}\r?\n', ''
             if ($patched -eq $content) {
               throw "rapidjson patch target was not found in $($f.FullName) - upstream file may have changed"

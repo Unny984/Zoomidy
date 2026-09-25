@@ -173,7 +173,8 @@ still exactly 1x and the configured magnification.
 
 Needs [xmake](https://xmake.io), plus **both** Windows toolchains — clang-cl for the 26.20 and
 26.51 builds and MSVC for the 26.10 one. For clang-cl, install LLVM or add *C++ Clang Compiler for
-Windows* in the Visual Studio Installer.
+Windows* in the Visual Studio Installer. The 26.51 build needs LLVM 22 or newer; the clang that
+ships with Visual Studio is too old for its headers.
 
 ```bash
 xmake f -p windows -a x64 -m release -y

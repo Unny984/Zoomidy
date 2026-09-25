@@ -25,6 +25,15 @@ jobs:
 
       - uses: xmake-io/github-action-setup-xmake@v1
 
+      # LeviLamina 26.51's headers need a newer clang than the one bundled with the runner's
+      # Visual Studio: it defaults ~MinecraftCommands() over members of types it only forward
+      # declares, which the older clang-cl rejects while building the package. LeviLamina's own
+      # CI builds 26.51 with LLVM 22, so match it.
+      - if: matrix.levilamina_version == '26.51'
+        uses: ZhongRuoyu/setup-llvm@v0
+        with:
+          llvm-version: 22
+
       # Forces every package (zlib, libssh2, ...) to build from source instead
       # of mixing in precompiled artifacts pinned to a different sub-dependency
       # version - that mix is what produces a stale/mismatched link reference.

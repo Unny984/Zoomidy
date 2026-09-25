@@ -10,8 +10,9 @@ namespace zoomidy::drift {
 /// mouse stops has to be driven by something other than mouse events, and there are none. So the
 /// outstanding motion is drained on a per-frame hook and pushed back in as a synthetic event.
 ///
-/// Only active while the cinematic option is on. With it off, nothing here runs and no events are
-/// synthesised.
+/// Only active while the cinematic option is on and the zoom is held. Releasing the zoom throws
+/// away whatever is still owed, so the camera stops with the zoom rather than coasting on past it.
+/// With the option off, nothing here runs and no events are synthesised.
 
 /// Takes a raw mouse delta into the pool of motion still owed. The caller must zero the event's
 /// own delta afterwards, or the movement is applied twice.

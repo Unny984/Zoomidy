@@ -168,8 +168,11 @@ void filterMouseInput(ll::event::MouseInputEvent& ev) {
         return;
     }
 
-    double const factor    = sensitivityFactor();
-    bool const   cinematic = config.cinematic.enabled;
+    double const factor = sensitivityFactor();
+    // Only while the zoom is held. During the ease-out the drift is being drained away, so
+    // movement banked there would be thrown out rather than applied; it gets the plain
+    // sensitivity scale instead.
+    bool const cinematic = config.cinematic.enabled && zoom.isActive();
 
     if (factor == 1.0 && !cinematic) {
         return;

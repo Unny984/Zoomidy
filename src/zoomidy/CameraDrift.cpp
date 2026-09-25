@@ -18,6 +18,7 @@
 #include "mc/deps/input/MouseMapper.h"
 
 #include "zoomidy/Input.h"
+#include "zoomidy/ZoomState.h"
 #include "zoomidy/Zoomidy.h"
 
 namespace zoomidy::drift {
@@ -100,6 +101,14 @@ short quantise(double value, double& residual) {
 void drainOneFrame() {
     auto const& config = Zoomidy::getInstance().getConfig();
     if (!config.cinematic.enabled) {
+        reset();
+        return;
+    }
+
+    // Zooming out ends the coast. The glide belongs to the zoomed view; letting it run on through
+    // the ease-out keeps turning the camera after the player has let go, and faster each frame as
+    // the sensitivity climbs back towards 1x.
+    if (!ZoomState::getInstance().isActive()) {
         reset();
         return;
     }

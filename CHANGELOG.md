@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   26.51 hands the first-person renderer the previous frame's projection as an extra argument, so
   the hide-hand hook has a second signature for that line; everything else is shared.
 
+### Fixed
+
+- With the cinematic camera on, zooming out mid-glide no longer leaves the camera turning. The
+  glide kept paying out through the zoom-out animation, speeding up as the sensitivity returned
+  to normal. Releasing the zoom now stops it on the spot.
+
 ## [0.4.0] - 2026-08-24
 
 ### Added

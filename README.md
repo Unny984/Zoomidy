@@ -29,6 +29,7 @@ Built as a **client-side [LeviLamina](https://github.com/LiteLDev/LeviLamina) mo
 |---|---|---|
 | **26.20.x** | **1.26.20.4** | `client` (default) |
 | **26.10.x** | **1.26.10.4** | `client_26_10` |
+| **26.51.x** | **1.26.51.1** | `client_26_51` |
 
 > The Store copy of Minecraft is usually newer than whatever LeviLamina supports, and the hooks
 > here are resolved against the exact game binary. Use LeviLauncher to download and switch to the
@@ -49,6 +50,12 @@ On LeviLamina **26.10.x**, install the matching variant instead:
 
 ```bash
 lip install github.com/Unny984/Zoomidy#client_26_10
+```
+
+On LeviLamina **26.51.x**:
+
+```bash
+lip install github.com/Unny984/Zoomidy#client_26_51
 ```
 
 ## Usage
@@ -73,9 +80,10 @@ away, and you can always rebind from the config file.
 **Every change saves itself.** There is no Apply button on either version — touch a control and it
 takes effect and is written to `config.json` straight away.
 
-The **26.10** build holds the same settings but shows them differently, because that version of
-LeviLamina predates the UI API the 26.20 screen is built on. The only screen it has that can report
-anything before it closes is a menu of buttons, so that is what it uses:
+The **26.51** build uses the same screen as 26.20. The **26.10** build holds the same settings but
+shows them differently, because that version of LeviLamina predates the UI API the 26.20 screen is
+built on. The only screen it has that can report anything before it closes is a menu of buttons,
+so that is what it uses:
 
 | | 26.20 | 26.10 |
 |---|---|---|
@@ -163,20 +171,26 @@ still exactly 1x and the configured magnification.
 
 ## Building
 
-Needs [xmake](https://xmake.io), plus **both** Windows toolchains — clang-cl for the 26.20 build
-and MSVC for the 26.10 one. For clang-cl, install LLVM or add *C++ Clang Compiler for Windows*
-in the Visual Studio Installer.
+Needs [xmake](https://xmake.io), plus **both** Windows toolchains — clang-cl for the 26.20 and
+26.51 builds and MSVC for the 26.10 one. For clang-cl, install LLVM or add *C++ Clang Compiler for
+Windows* in the Visual Studio Installer. The 26.51 build needs LLVM 22 or newer; the clang that
+ships with Visual Studio is too old for its headers.
 
 ```bash
 xmake f -p windows -a x64 -m release -y
 xmake
 ```
 
-This builds against LeviLamina **26.20.x** by default. For the **26.10.x** line, pass the
-version explicitly:
+This builds against LeviLamina **26.20.x** by default. For the **26.10.x** or **26.51.x** line,
+pass the version explicitly:
 
 ```bash
 xmake f -p windows -a x64 -m release --levilamina_version=26.10 -y
+xmake
+```
+
+```bash
+xmake f -p windows -a x64 -m release --levilamina_version=26.51 -y
 xmake
 ```
 
@@ -184,9 +198,10 @@ The packed mod ends up in `bin/`.
 
 > **The compiler is not a free choice.** `xmake.lua` picks it from the target version, and it has
 > to: LeviLamina's event ids are a hash of a type name the *compiler* produces, and the event
-> classes live in an inline namespace that MSVC and clang spell differently. 26.20 is built with
-> clang and 26.10 with MSVC, so a mod compiled with the other one registers its listeners under
-> ids that nothing ever emits — it loads, reports no error, and then quietly does nothing.
+> classes live in an inline namespace that MSVC and clang spell differently. 26.20 and 26.51 are
+> built with clang and 26.10 with MSVC, so a mod compiled with the other one registers its
+> listeners under ids that nothing ever emits — it loads, reports no error, and then quietly does
+> nothing.
 
 ## License
 

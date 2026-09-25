@@ -16,12 +16,23 @@ jobs:
             suffix: ""
           - levilamina_version: "26.10"
             suffix: "-26.10"
+          - levilamina_version: "26.51"
+            suffix: "-26.51"
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # levibuildscript reads the mod version from the git tag.
 
       - uses: xmake-io/github-action-setup-xmake@v1
+
+      # LeviLamina 26.51's headers need a newer clang than the one bundled with the runner's
+      # Visual Studio: it defaults ~MinecraftCommands() over members of types it only forward
+      # declares, which the older clang-cl rejects while building the package. LeviLamina's own
+      # CI builds 26.51 with LLVM 22, so match it.
+      - if: matrix.levilamina_version == '26.51'
+        uses: ZhongRuoyu/setup-llvm@v0
+        with:
+          llvm-version: 22
 
       # Forces every package (zlib, libssh2, ...) to build from source instead
       # of mixing in precompiled artifacts pinned to a different sub-dependency
@@ -73,6 +84,11 @@ jobs:
           }
           foreach ($f in $files) {
             $content = Get-Content $f.FullName -Raw
+            # The package cache can hand back a copy this step already patched.
+            if ($content -notmatch 'GenericStringRef& operator=') {
+              Write-Host "rapidjson already patched in $($f.FullName)"
+              continue
+            }
             $patched = $content -replace 'GenericStringRef& operator=\(const GenericStringRef& rhs\) \{ s = rhs\.s; length = rhs\.length; \}\r?\n', ''
             if ($patched -eq $content) {
               throw "rapidjson patch target was not found in $($f.FullName) - upstream file may have changed"
@@ -114,6 +130,8 @@ jobs:
             suffix: ""
           - levilamina_version: "26.10"
             suffix: "-26.10"
+          - levilamina_version: "26.51"
+            suffix: "-26.51"
     needs:
       - build
       - update-release-notes
